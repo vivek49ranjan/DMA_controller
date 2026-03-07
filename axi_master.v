@@ -2,226 +2,216 @@ module axi_master #(
     parameter ADDR_WIDTH = 32,
     parameter DATA_WIDTH = 32,
     parameter ID_WIDTH   = 4,
-    parameter [2:0] PROT_VAL  = 3'b000,
-    parameter [3:0] CACHE_VAL = 4'b0000,
-    parameter [1:0] BURST_VAL = 2'b01,
-    parameter [1:0] LOCK_VAL  = 2'b00,
-    parameter [2:0] SIZE_VAL  = 3'b010,
     parameter [ID_WIDTH-1:0] ID_VAL = 0
 ) (
-    input ACLK,
-    input ARESETn,
+    input  wire                      ACLK,
+    input  wire                      ARESETn,
     
-    input  [ADDR_WIDTH-1:0] cmd_addr,
-    input  [15:0]           cmd_len,
-    input                   cmd_rnw,
-    input                   cmd_valid,
-    output                  cmd_ready,
-    output reg              cmd_done,
-    output reg              cmd_error,
+    input  wire [ADDR_WIDTH-1:0]     cmd_addr,
+    input  wire [15:0]               cmd_len,
+    input  wire                      cmd_rnw,
+    input  wire                      cmd_valid,
+    output reg                       cmd_ready,
+    output reg                       cmd_done,
+    output reg                       cmd_error,
 
-    input  [DATA_WIDTH-1:0] tx_data,
-    input                   tx_valid,
-    output                  tx_ready,
+    input  wire [DATA_WIDTH-1:0]     tx_data,
+    input  wire                      tx_valid,
+    output reg                       tx_ready,
+    output reg  [DATA_WIDTH-1:0]     rx_data,
+    output reg                       rx_valid,
+    input  wire                      rx_ready,
 
-    output [DATA_WIDTH-1:0] rx_data,
-    output                  rx_valid,
-    input                   rx_ready,
-
-    output [ID_WIDTH-1:0]   AWID,
-    output [ADDR_WIDTH-1:0] AWADDR,
-    output [7:0]            AWLEN,
-    output [2:0]            AWSIZE,
-    output [1:0]            AWBURST,
-    output [1:0]            AWLOCK,
-    output [3:0]            AWCACHE,
-    output [2:0]            AWPROT,
-    output reg              AWVALID,
-    input                   AWREADY,
+    output reg  [ID_WIDTH-1:0]       AWID,
+    output reg  [ADDR_WIDTH-1:0]     AWADDR,
+    output reg  [3:0]                AWLEN,
+    output reg  [2:0]                AWSIZE,
+    output reg  [1:0]                AWBURST,
+    output reg                       AWVALID,
+    input  wire                      AWREADY,
     
-    output [ID_WIDTH-1:0]   WID,
-    output [DATA_WIDTH-1:0] WDATA,
-    output [(DATA_WIDTH/8)-1:0] WSTRB,
-    output                  WLAST,
-    output                  WVALID,
-    input                   WREADY,
+    output reg  [ID_WIDTH-1:0]       WID,
+    output reg  [DATA_WIDTH-1:0]     WDATA,
+    output reg  [(DATA_WIDTH/8)-1:0] WSTRB,
+    output reg                       WLAST,
+    output reg                       WVALID,
+    input  wire                      WREADY,
     
-    input  [ID_WIDTH-1:0]   BID,
-    input  [1:0]            BRESP,
-    input                   BVALID,
-    output reg              BREADY,
+    input  wire [ID_WIDTH-1:0]       BID,
+    input  wire [1:0]                BRESP,
+    input  wire                      BVALID,
+    output reg                       BREADY,
     
-    output [ID_WIDTH-1:0]   ARID,
-    output [ADDR_WIDTH-1:0] ARADDR,
-    output [7:0]            ARLEN,
-    output [2:0]            ARSIZE,
-    output [1:0]            ARBURST,
-    output [1:0]            ARLOCK,
-    output [3:0]            ARCACHE,
-    output [2:0]            ARPROT,
-    output reg              ARVALID,
-    input                   ARREADY,
+    output reg  [ID_WIDTH-1:0]       ARID,
+    output reg  [ADDR_WIDTH-1:0]     ARADDR,
+    output reg  [3:0]                ARLEN,
+    output reg  [2:0]                ARSIZE,
+    output reg  [1:0]                ARBURST,
+    output reg                       ARVALID,
+    input  wire                      ARREADY,
     
-    input  [ID_WIDTH-1:0]   RID,
-    input  [DATA_WIDTH-1:0] RDATA,
-    input  [1:0]            RRESP,
-    input                   RLAST,
-    input                   RVALID,
-    output                  RREADY
+    input  wire [ID_WIDTH-1:0]       RID,
+    input  wire [DATA_WIDTH-1:0]     RDATA,
+    input  wire [1:0]                RRESP,
+    input  wire                      RLAST,
+    input  wire                      RVALID,
+    output reg                       RREADY
 );
 
-    assign AWID    = ID_VAL;
-    assign AWSIZE  = SIZE_VAL;
-    assign AWBURST = BURST_VAL;
-    assign AWLOCK  = LOCK_VAL;
-    assign AWCACHE = CACHE_VAL;
-    assign AWPROT  = PROT_VAL;
-
-    assign ARID    = ID_VAL;
-    assign ARSIZE  = SIZE_VAL;
-    assign ARBURST = BURST_VAL;
-    assign ARLOCK  = LOCK_VAL;
-    assign ARCACHE = CACHE_VAL;
-    assign ARPROT  = PROT_VAL;
-    assign WID     = ID_VAL;
+    localparam [2:0] 
+        W_IDLE = 3'd0,
+        W_ADDR = 3'd1,
+        W_DATA = 3'd2,
+        W_RESP = 3'd3,
+        W_ERR  = 3'd4;
 
     localparam [2:0] 
-        IDLE       = 3'd0,
-        ADDR_PHASE = 3'd1,
-        DATA_PHASE = 3'd2,
-        RESP_PHASE = 3'd3,
-        ERR_STATE  = 3'd4;
+        R_IDLE = 3'd0,
+        R_ADDR = 3'd1,
+        R_DATA = 3'd2,
+        R_ERR  = 3'd3;
 
-    reg [2:0] write_state, read_state;
-    reg [15:0] w_burst_count;
+    reg [2:0] write_state;
+    reg [2:0] read_state;
+    reg [3:0] w_burst_count;
 
-    assign AWADDR = cmd_addr;
-    assign AWLEN  = cmd_len[7:0] - 1'b1;
-    
-    assign WVALID   = (write_state == DATA_PHASE) ? tx_valid : 1'b0;
-    assign tx_ready = (write_state == DATA_PHASE) ? WREADY : 1'b0;
-    assign WDATA    = tx_data;
-    assign WSTRB    = {(DATA_WIDTH/8){1'b1}};
-    assign WLAST    = (w_burst_count == cmd_len - 1);
+    always @(*) begin
+        cmd_ready = (write_state == W_IDLE) && (read_state == R_IDLE);
+        
+        cmd_done  = ((write_state == W_RESP && BVALID && (BRESP == 2'b00 || BRESP == 2'b01)) ||
+                     (read_state == R_DATA  && RVALID && RLAST && (RRESP == 2'b00 || RRESP == 2'b01)));
+                     
+        cmd_error = ((write_state == W_RESP && BVALID && (BRESP == 2'b10 || BRESP == 2'b11)) ||
+                     (read_state == R_DATA  && RVALID && (RRESP == 2'b10 || RRESP == 2'b11)));
+    end
+
+    always @(*) begin
+        AWID     = ID_VAL;
+        AWSIZE   = 3'b010; 
+        AWBURST  = 2'b01;  
+        AWADDR   = cmd_addr;
+        AWLEN    = cmd_len[3:0] - 1'b1;
+        AWVALID  = 1'b0;
+        
+        WID      = ID_VAL;
+        WDATA    = tx_data;
+        WSTRB    = {(DATA_WIDTH/8){1'b1}}; 
+        WLAST    = (w_burst_count == (cmd_len[3:0] - 1'b1));
+        WVALID   = 1'b0;
+        
+        tx_ready = 1'b0;
+        BREADY   = 1'b0;
+
+        case (write_state)
+            W_ADDR: begin
+                AWVALID = 1'b1;
+            end
+            W_DATA: begin
+                WVALID   = tx_valid;
+                tx_ready = WREADY;
+            end
+            W_RESP: begin
+                BREADY = 1'b1;
+            end
+        endcase
+    end
 
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
-            write_state   <= IDLE;
-            AWVALID       <= 1'b0;
-            BREADY        <= 1'b0;
-            cmd_done      <= 1'b0;
-            cmd_error     <= 1'b0;
-            w_burst_count <= 16'd0;
+            write_state   <= W_IDLE;
+            w_burst_count <= 4'd0;
         end else begin
-            cmd_done <= 1'b0;
-            
             case (write_state)
-                IDLE: begin
-                    cmd_error <= 1'b0;
-                    w_burst_count <= 16'd0;
+                W_IDLE: begin
+                    w_burst_count <= 4'd0;
                     if (cmd_valid && cmd_rnw) begin
-                        write_state <= ADDR_PHASE;
-                        AWVALID     <= 1'b1;
+                        write_state <= W_ADDR;
                     end
                 end
-
-                ADDR_PHASE: begin
-                    if (AWREADY && AWVALID) begin
-                        AWVALID     <= 1'b0;
-                        write_state <= DATA_PHASE;
+                W_ADDR: begin
+                    if (AWREADY) begin
+                        write_state <= W_DATA;
                     end
                 end
-
-                DATA_PHASE: begin
+                W_DATA: begin
                     if (WREADY && WVALID) begin
-                        if (WLAST) begin
-                            write_state <= RESP_PHASE;
-                            BREADY      <= 1'b1;
-                        end else begin
+                        if (!WLAST) begin
                             w_burst_count <= w_burst_count + 1'b1;
+                        end else begin
+                            write_state <= W_RESP;
                         end
                     end
                 end
-
-                RESP_PHASE: begin
-                    if (BVALID && BREADY) begin
-                        BREADY <= 1'b0;
-                        
-                        case (BRESP)
-                            2'b00: begin
-                                write_state <= IDLE;
-                                cmd_done    <= 1'b1;
-                            end
-                            2'b01: begin
-                                write_state <= IDLE;
-                                cmd_done    <= 1'b1; 
-                            end
-                            2'b10: begin
-                                write_state <= ERR_STATE;
-                                cmd_error   <= 1'b1;
-                            end
-                            2'b11: begin
-                                write_state <= ERR_STATE;
-                                cmd_error   <= 1'b1;
-                            end
-                        endcase
+                W_RESP: begin
+                    if (BVALID) begin
+                        if (BRESP == 2'b10 || BRESP == 2'b11) begin
+                            write_state <= W_ERR;
+                        end else begin
+                            write_state <= W_IDLE;
+                        end
                     end
                 end
-
-                ERR_STATE: begin
-                    write_state <= IDLE; 
+                W_ERR: begin
+                    write_state <= W_IDLE; 
                 end
+                default: write_state <= W_IDLE;
             endcase
         end
     end
 
-    assign ARADDR = cmd_addr;
-    assign ARLEN  = cmd_len[7:0] - 1'b1;
+    always @(*) begin
+        ARID     = ID_VAL;
+        ARSIZE   = 3'b010; 
+        ARBURST  = 2'b01;  
+        ARADDR   = cmd_addr;
+        ARLEN    = cmd_len[3:0] - 1'b1;
+        ARVALID  = 1'b0;
+        
+        RREADY   = 1'b0;
+        rx_valid = 1'b0;
+        rx_data  = RDATA; 
 
-    assign rx_valid = (read_state == DATA_PHASE) ? RVALID : 1'b0;
-    assign RREADY   = (read_state == DATA_PHASE) ? rx_ready : 1'b0;
-    assign rx_data  = RDATA;
+        case (read_state)
+            R_ADDR: begin
+                ARVALID = 1'b1;
+            end
+            R_DATA: begin
+                RREADY   = rx_ready;
+                rx_valid = RVALID;
+            end
+        endcase
+    end
 
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
-            read_state <= IDLE;
-            ARVALID    <= 1'b0;
+            read_state <= R_IDLE;
         end else begin
             case (read_state)
-                IDLE: begin
+                R_IDLE: begin
                     if (cmd_valid && !cmd_rnw) begin
-                        read_state <= ADDR_PHASE;
-                        ARVALID    <= 1'b1;
+                        read_state <= R_ADDR;
                     end
                 end
-
-                ADDR_PHASE: begin
-                    if (ARREADY && ARVALID) begin
-                        ARVALID    <= 1'b0;
-                        read_state <= DATA_PHASE;
+                R_ADDR: begin
+                    if (ARREADY) begin
+                        read_state <= R_DATA;
                     end
                 end
-
-                DATA_PHASE: begin
+                R_DATA: begin
                     if (RVALID && RREADY) begin
                         if (RRESP == 2'b10 || RRESP == 2'b11) begin
-                            read_state <= ERR_STATE;
-                            cmd_error  <= 1'b1;
-                        end 
-                        else if (RLAST) begin
-                            read_state <= IDLE;
-                            cmd_done   <= 1'b1;
+                            read_state <= R_ERR;
+                        end else if (RLAST) begin
+                            read_state <= R_IDLE;
                         end
                     end
                 end
-                
-                ERR_STATE: begin
-                    read_state <= IDLE;
+                R_ERR: begin
+                    read_state <= R_IDLE;
                 end
+                default: read_state <= R_IDLE;
             endcase
         end
     end
-
-    assign cmd_ready = (write_state == IDLE) && (read_state == IDLE);
 
 endmodule
