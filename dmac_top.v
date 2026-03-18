@@ -11,13 +11,28 @@ module dmac_top #(
     
     output wire                  tb_io0_rx_rd_en,
     input  wire [DATA_WIDTH-1:0] tb_io0_rx_data,
-    input  wire                  tb_io0_rx_empty
+    input  wire                  tb_io0_rx_empty,
+
+    input  wire [ADDR_WIDTH-1:0] s_axi_awaddr,
+    input  wire                  s_axi_awvalid,
+    output wire                  s_axi_awready,
+    input  wire [DATA_WIDTH-1:0] s_axi_wdata,
+    input  wire [(DATA_WIDTH/8)-1:0] s_axi_wstrb,
+    input  wire                  s_axi_wvalid,
+    output wire                  s_axi_wready,
+    output wire [1:0]            s_axi_bresp,
+    output wire                  s_axi_bvalid,
+    input  wire                  s_axi_bready
 );
 
     wire [ADDR_WIDTH-1:0] cmd_addr;
     wire [15:0]           cmd_len;
+    wire [2:0]            cmd_size;
     wire                  cmd_rnw;
-    wire                  cmd_valid, cmd_ready, cmd_done, cmd_error;
+    wire                  cmd_valid, cmd_error;
+    
+    wire                  read_cmd_ready, write_cmd_ready;
+    wire                  read_cmd_done, write_cmd_done;
 
     wire [DATA_WIDTH-1:0] tx_data, rx_data;
     wire                  tx_valid, tx_ready, rx_valid, rx_ready;
@@ -32,7 +47,7 @@ module dmac_top #(
     wire [ADDR_WIDTH-1:0] reg_wr_addr, reg_rd_addr;
     wire [DATA_WIDTH-1:0] reg_wdata, reg_rdata;
 
-    wire [ID_WIDTH-1:0]   m_awid, m_wid, m_arid;
+    wire [ID_WIDTH-1:0]   m_awid, m_wid, m_arid, m_bid, m_rid;
     wire [ADDR_WIDTH-1:0] m_awaddr, m_araddr;
     wire [3:0]            m_awlen, m_arlen;
     wire [2:0]            m_awsize, m_arsize;
@@ -63,8 +78,11 @@ module dmac_top #(
     ) dma_ctrl_inst (
         .clk(clk),                 .resetn(resetn),
         .cmd_addr(cmd_addr),       .cmd_len(cmd_len),
+        .cmd_size(cmd_size),
         .cmd_rnw(cmd_rnw),         .cmd_valid(cmd_valid),
-        .cmd_ready(cmd_ready),     .cmd_done(cmd_done),      .cmd_error(cmd_error),
+        .read_cmd_ready(read_cmd_ready), .write_cmd_ready(write_cmd_ready),
+        .read_cmd_done(read_cmd_done),   .write_cmd_done(write_cmd_done),
+        .cmd_error(cmd_error),
         .tx_data(tx_data),         .tx_valid(tx_valid),      .tx_ready(tx_ready),
         .rx_data(rx_data),         .rx_valid(rx_valid),      .rx_ready(rx_ready),
         .cpu_intr(cpu_intr),
@@ -89,8 +107,11 @@ module dmac_top #(
     ) axi_master_inst (
         .ACLK(clk),                .ARESETn(resetn),
         .cmd_addr(cmd_addr),       .cmd_len(cmd_len),
+        .cmd_size(cmd_size),
         .cmd_rnw(cmd_rnw),         .cmd_valid(cmd_valid),
-        .cmd_ready(cmd_ready),     .cmd_done(cmd_done),      .cmd_error(cmd_error),
+        .read_cmd_ready(read_cmd_ready), .write_cmd_ready(write_cmd_ready),
+        .read_cmd_done(read_cmd_done),   .write_cmd_done(write_cmd_done),
+        .cmd_error(cmd_error),
         .tx_data(tx_data),         .tx_valid(tx_valid),      .tx_ready(tx_ready),
         .rx_data(rx_data),         .rx_valid(rx_valid),      .rx_ready(rx_ready),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -145,6 +166,12 @@ module dmac_top #(
         .DMA_RLAST(dma_rlast), .DMA_RVALID(dma_rvalid), .DMA_RREADY(dma_rready)
     );
 
+    wire                  mem_wr_en, mem_rd_en;
+    wire [ADDR_WIDTH-1:0] mem_wr_ad, mem_rd_ad;
+    wire [DATA_WIDTH-1:0] mem_wdata;
+    wire [(DATA_WIDTH/8)-1:0] mem_wstrb;
+    wire [DATA_WIDTH-1:0] mem_rdata;
+
     axi_slave_memory #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH)
     ) main_memory_inst (
@@ -157,7 +184,24 @@ module dmac_top #(
         .BID(), .BRESP(s0_bresp), .BVALID(s0_bvalid), .BREADY(s0_bready),
         .ARVALID(s0_arvalid), .ARREADY(s0_arready),
         .RID(), .RDATA(s0_rdata), .RRESP(s0_rresp), .RLAST(s0_rlast), .RVALID(s0_rvalid), .RREADY(s0_rready),
+        .MEMORY_WR_EN(mem_wr_en), .MEMORY_WR_AD(mem_wr_ad), .MEMORY_WDATA(mem_wdata), .MEMORY_WSTRB(mem_wstrb),
+        .MEMORY_RD_EN(mem_rd_en), .MEMORY_RD_AD(mem_rd_ad), .MEMORY_RDATA(mem_rdata),
         .MEMORY_WR_BUSY(1'b0), .MEMORY_RD_BUSY(1'b0) 
+    );
+
+    ram #(
+        .DEPTH(1024),
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH)
+    ) internal_sram_inst (
+        .clk(clk),
+        .wr_en(mem_wr_en),
+        .wr_addr(mem_wr_ad),
+        .wdata(mem_wdata),
+        .wstrb(mem_wstrb),
+        .rd_en(mem_rd_en),
+        .rd_addr(mem_rd_ad),
+        .rdata(mem_rdata)
     );
 
     genvar i;
@@ -193,22 +237,40 @@ module dmac_top #(
         end
     endgenerate
 
-    assign dma_awready = 1'b1;
-    assign dma_wready  = 1'b1;
-    assign dma_bvalid  = dma_awvalid & dma_wvalid;
+  
+    assign dma_awready = 1'b0;
+    assign dma_wready  = 1'b0;
+    assign dma_bvalid  = 1'b0;
     assign dma_bresp   = 2'b00;
-
-    assign reg_wr_en   = dma_wvalid & dma_wready;
-    assign reg_wr_addr = m_awaddr; 
-    assign reg_wdata   = m_wdata;  
-
-    assign dma_arready = 1'b1;
-    assign dma_rvalid  = dma_arvalid;
-    assign dma_rlast   = 1'b1;
+    assign dma_arready = 1'b0;
+    assign dma_rvalid  = 1'b0;
+    assign dma_rlast   = 1'b0;
     assign dma_rresp   = 2'b00;
-    assign dma_rdata   = reg_rdata;
+    assign dma_rdata   = {DATA_WIDTH{1'b0}};
 
-    assign reg_rd_en   = dma_arvalid;
-    assign reg_rd_addr = m_araddr; 
+    axi_lite_slave #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .DATA_WIDTH(DATA_WIDTH)
+    ) axi_lite_inst (
+        .ACLK(clk),
+        .ARESETN(resetn),
+        .S_AXI_AWADDR(s_axi_awaddr),
+        .S_AXI_AWVALID(s_axi_awvalid),
+        .S_AXI_AWREADY(s_axi_awready),
+        .S_AXI_WDATA(s_axi_wdata),
+        .S_AXI_WSTRB(s_axi_wstrb),
+        .S_AXI_WVALID(s_axi_wvalid),
+        .S_AXI_WREADY(s_axi_wready),
+        .S_AXI_BRESP(s_axi_bresp),
+        .S_AXI_BVALID(s_axi_bvalid),
+        .S_AXI_BREADY(s_axi_bready),
+        
+        .reg_wr_en(reg_wr_en),
+        .reg_wr_addr(reg_wr_addr),
+        .reg_wdata(reg_wdata)
+    );
+
+    assign reg_rd_en   = 1'b0; 
+    assign reg_rd_addr = {ADDR_WIDTH{1'b0}};
 
 endmodule
