@@ -9,15 +9,20 @@ module axi_master #(
     
     input  wire [ADDR_WIDTH-1:0]     cmd_addr,
     input  wire [15:0]               cmd_len,
+    input  wire [2:0]                cmd_size,
     input  wire                      cmd_rnw,
     input  wire                      cmd_valid,
-    output reg                       cmd_ready,
-    output reg                       cmd_done,
+    
+    output reg                       read_cmd_ready,
+    output reg                       write_cmd_ready,
+    output reg                       read_cmd_done,
+    output reg                       write_cmd_done,
     output reg                       cmd_error,
 
     input  wire [DATA_WIDTH-1:0]     tx_data,
     input  wire                      tx_valid,
     output reg                       tx_ready,
+    
     output reg  [DATA_WIDTH-1:0]     rx_data,
     output reg                       rx_valid,
     input  wire                      rx_ready,
@@ -58,28 +63,22 @@ module axi_master #(
     output reg                       RREADY
 );
 
-    localparam [2:0] 
-        W_IDLE = 3'd0,
-        W_ADDR = 3'd1,
-        W_DATA = 3'd2,
-        W_RESP = 3'd3,
-        W_ERR  = 3'd4;
+    localparam [2:0] W_IDLE = 3'd0, W_ADDR = 3'd1, W_DATA = 3'd2, W_RESP = 3'd3, W_ERR  = 3'd4;
+    localparam [2:0] R_IDLE = 3'd0, R_ADDR = 3'd1, R_DATA = 3'd2, R_ERR  = 3'd3;
 
-    localparam [2:0] 
-        R_IDLE = 3'd0,
-        R_ADDR = 3'd1,
-        R_DATA = 3'd2,
-        R_ERR  = 3'd3;
-
-    reg [2:0] write_state;
-    reg [2:0] read_state;
+    reg [2:0] write_state, read_state;
     reg [3:0] w_burst_count;
+    
+    reg [ADDR_WIDTH-1:0] w_addr_reg, r_addr_reg;
+    reg [2:0]            w_size_reg, r_size_reg;
+    reg [15:0]           w_len_reg, r_len_reg;
 
     always @(*) begin
-        cmd_ready = (write_state == W_IDLE) && (read_state == R_IDLE);
+        write_cmd_ready = (write_state == W_IDLE);
+        read_cmd_ready  = (read_state == R_IDLE);
         
-        cmd_done  = ((write_state == W_RESP && BVALID && (BRESP == 2'b00 || BRESP == 2'b01)) ||
-                     (read_state == R_DATA  && RVALID && RLAST && (RRESP == 2'b00 || RRESP == 2'b01)));
+        write_cmd_done  = (write_state == W_RESP && BVALID && (BRESP == 2'b00 || BRESP == 2'b01));
+        read_cmd_done   = (read_state == R_DATA  && RVALID && RLAST && (RRESP == 2'b00 || RRESP == 2'b01));
                      
         cmd_error = ((write_state == W_RESP && BVALID && (BRESP == 2'b10 || BRESP == 2'b11)) ||
                      (read_state == R_DATA  && RVALID && (RRESP == 2'b10 || RRESP == 2'b11)));
@@ -87,32 +86,27 @@ module axi_master #(
 
     always @(*) begin
         AWID     = ID_VAL;
-        AWSIZE   = 3'b010; 
+        AWSIZE   = w_size_reg; 
         AWBURST  = 2'b01;  
-        AWADDR   = cmd_addr;
-        AWLEN    = cmd_len[3:0] - 1'b1;
+        AWADDR   = w_addr_reg;
+        AWLEN    = w_len_reg[3:0] - 1'b1;
         AWVALID  = 1'b0;
         
         WID      = ID_VAL;
         WDATA    = tx_data;
-        WSTRB    = {(DATA_WIDTH/8){1'b1}}; 
-        WLAST    = (w_burst_count == (cmd_len[3:0] - 1'b1));
+        WSTRB    = ((w_size_reg == 3'b000) ? 4'b0001 : (w_size_reg == 3'b001) ? 4'b0011 : 4'b1111) << w_addr_reg[1:0];
+        WLAST    = (w_burst_count == (w_len_reg[3:0] - 1'b1));
         WVALID   = 1'b0;
-        
         tx_ready = 1'b0;
         BREADY   = 1'b0;
 
         case (write_state)
-            W_ADDR: begin
-                AWVALID = 1'b1;
-            end
+            W_ADDR: AWVALID = 1'b1;
             W_DATA: begin
                 WVALID   = tx_valid;
                 tx_ready = WREADY;
             end
-            W_RESP: begin
-                BREADY = 1'b1;
-            end
+            W_RESP: BREADY = 1'b1;
         endcase
     end
 
@@ -120,40 +114,32 @@ module axi_master #(
         if (!ARESETn) begin
             write_state   <= W_IDLE;
             w_burst_count <= 4'd0;
+            w_addr_reg    <= {ADDR_WIDTH{1'b0}};
+            w_size_reg    <= 3'd0;
+            w_len_reg     <= 16'd0;
         end else begin
             case (write_state)
                 W_IDLE: begin
                     w_burst_count <= 4'd0;
                     if (cmd_valid && cmd_rnw) begin
                         write_state <= W_ADDR;
+                        w_addr_reg  <= cmd_addr;
+                        w_size_reg  <= cmd_size;
+                        w_len_reg   <= cmd_len;
                     end
                 end
-                W_ADDR: begin
-                    if (AWREADY) begin
-                        write_state <= W_DATA;
-                    end
-                end
+                W_ADDR: if (AWREADY) write_state <= W_DATA;
                 W_DATA: begin
                     if (WREADY && WVALID) begin
-                        if (!WLAST) begin
-                            w_burst_count <= w_burst_count + 1'b1;
-                        end else begin
-                            write_state <= W_RESP;
-                        end
+                        w_addr_reg <= w_addr_reg + (1 << w_size_reg);
+                        if (!WLAST) w_burst_count <= w_burst_count + 1'b1;
+                        else write_state <= W_RESP;
                     end
                 end
                 W_RESP: begin
-                    if (BVALID) begin
-                        if (BRESP == 2'b10 || BRESP == 2'b11) begin
-                            write_state <= W_ERR;
-                        end else begin
-                            write_state <= W_IDLE;
-                        end
-                    end
+                    if (BVALID) write_state <= (BRESP == 2'b10 || BRESP == 2'b11) ? W_ERR : W_IDLE;
                 end
-                W_ERR: begin
-                    write_state <= W_IDLE; 
-                end
+                W_ERR: write_state <= W_IDLE; 
                 default: write_state <= W_IDLE;
             endcase
         end
@@ -161,10 +147,10 @@ module axi_master #(
 
     always @(*) begin
         ARID     = ID_VAL;
-        ARSIZE   = 3'b010; 
+        ARSIZE   = r_size_reg; 
         ARBURST  = 2'b01;  
-        ARADDR   = cmd_addr;
-        ARLEN    = cmd_len[3:0] - 1'b1;
+        ARADDR   = r_addr_reg;
+        ARLEN    = r_len_reg[3:0] - 1'b1;
         ARVALID  = 1'b0;
         
         RREADY   = 1'b0;
@@ -172,9 +158,7 @@ module axi_master #(
         rx_data  = RDATA; 
 
         case (read_state)
-            R_ADDR: begin
-                ARVALID = 1'b1;
-            end
+            R_ADDR: ARVALID = 1'b1;
             R_DATA: begin
                 RREADY   = rx_ready;
                 rx_valid = RVALID;
@@ -185,30 +169,27 @@ module axi_master #(
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
             read_state <= R_IDLE;
+            r_addr_reg <= {ADDR_WIDTH{1'b0}};
+            r_size_reg <= 3'd0;
+            r_len_reg  <= 16'd0;
         end else begin
             case (read_state)
                 R_IDLE: begin
                     if (cmd_valid && !cmd_rnw) begin
                         read_state <= R_ADDR;
+                        r_addr_reg <= cmd_addr;
+                        r_size_reg <= cmd_size;
+                        r_len_reg  <= cmd_len;
                     end
                 end
-                R_ADDR: begin
-                    if (ARREADY) begin
-                        read_state <= R_DATA;
-                    end
-                end
+                R_ADDR: if (ARREADY) read_state <= R_DATA;
                 R_DATA: begin
                     if (RVALID && RREADY) begin
-                        if (RRESP == 2'b10 || RRESP == 2'b11) begin
-                            read_state <= R_ERR;
-                        end else if (RLAST) begin
-                            read_state <= R_IDLE;
-                        end
+                        if (RRESP == 2'b10 || RRESP == 2'b11) read_state <= R_ERR;
+                        else if (RLAST) read_state <= R_IDLE;
                     end
                 end
-                R_ERR: begin
-                    read_state <= R_IDLE;
-                end
+                R_ERR: read_state <= R_IDLE;
                 default: read_state <= R_IDLE;
             endcase
         end
