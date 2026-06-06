@@ -17,6 +17,7 @@ module axi_router #(
     input  wire [ADDR_WIDTH-1:0] M_ARADDR,
     input  wire                  M_ARVALID,
     output wire                  M_ARREADY,
+    
     output wire [DATA_WIDTH-1:0] M_RDATA,
     output wire [1:0]            M_RRESP,
     output wire                  M_RLAST,
@@ -69,6 +70,7 @@ module axi_router #(
     output wire                  DMA_RREADY
 );
 
+    // 1. Decode the Addresses
     wire is_aw_mem = (M_AWADDR[31:28] == 4'h0);
     wire is_aw_io  = (M_AWADDR[31:28] == 4'h4);
     wire is_aw_dma = (M_AWADDR[31:28] == 4'h8);
@@ -122,7 +124,6 @@ module axi_router #(
     assign MEM_RREADY  = (r_target_type == 2'd0) ? M_RREADY : 1'b0;
     assign IO_RREADY   = (r_target_type == 2'd1) ? (8'b1 << r_target_idx) & {8{M_RREADY}} : 8'd0;
     assign DMA_RREADY  = (r_target_type == 2'd2) ? M_RREADY : 1'b0;
-
 
     assign M_AWREADY = is_aw_mem ? MEM_AWREADY :
                        is_aw_io  ? IO_AWREADY[aw_io_idx] :
