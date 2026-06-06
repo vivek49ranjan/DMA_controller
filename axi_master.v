@@ -63,135 +63,136 @@ module axi_master #(
     output reg                       RREADY
 );
 
-    localparam [2:0] W_IDLE = 3'd0, W_ADDR = 3'd1, W_DATA = 3'd2, W_RESP = 3'd3, W_ERR  = 3'd4;
-    localparam [2:0] R_IDLE = 3'd0, R_ADDR = 3'd1, R_DATA = 3'd2, R_ERR  = 3'd3;
+  
+    reg write_active;
+    reg aw_pending;  
+    reg w_pending;   
 
-    reg [2:0] write_state, read_state;
-    reg [3:0] w_burst_count;
+    reg read_active;
+    reg ar_pending;  
+
+    reg [ADDR_WIDTH-1:0] aw_addr_reg;  
+    reg [ADDR_WIDTH-1:0] w_addr_reg;  
+    reg [ADDR_WIDTH-1:0] r_addr_reg;   
     
-    reg [ADDR_WIDTH-1:0] w_addr_reg, r_addr_reg;
     reg [2:0]            w_size_reg, r_size_reg;
     reg [15:0]           w_len_reg, r_len_reg;
+    reg [3:0]            w_burst_count;
 
-    always @(*) begin
-        write_cmd_ready = (write_state == W_IDLE);
-        read_cmd_ready  = (read_state == R_IDLE);
-        
-        write_cmd_done  = (write_state == W_RESP && BVALID && (BRESP == 2'b00 || BRESP == 2'b01));
-        read_cmd_done   = (read_state == R_DATA  && RVALID && RLAST && (RRESP == 2'b00 || RRESP == 2'b01));
-                     
-        cmd_error = ((write_state == W_RESP && BVALID && (BRESP == 2'b10 || BRESP == 2'b11)) ||
-                     (read_state == R_DATA  && RVALID && (RRESP == 2'b10 || RRESP == 2'b11)));
-    end
+    wire [ADDR_WIDTH-1:0] w_align_mask = ~((1 << w_size_reg) - 1);
+    
+    reg [127:0] unshifted_strb; 
+    reg [31:0]  addr_offset;
 
+  
     always @(*) begin
-        AWID     = ID_VAL;
-        AWSIZE   = w_size_reg; 
-        AWBURST  = 2'b01;  
-        AWADDR   = w_addr_reg;
-        AWLEN    = w_len_reg[3:0] - 1'b1;
-        AWVALID  = 1'b0;
+        write_cmd_ready = !write_active;
+        read_cmd_ready  = !read_active;
+
+        write_cmd_done = (write_active && BVALID && BREADY && (BRESP[1] == 1'b0));
+        read_cmd_done  = (read_active  && RVALID && RREADY && RLAST && (RRESP[1] == 1'b0));
         
+        cmd_error = ((write_active && BVALID && BREADY && BRESP[1] == 1'b1) ||
+                     (read_active  && RVALID && RREADY && RLAST && RRESP[1] == 1'b1));
+
+        AWID    = ID_VAL;
+        AWADDR  = aw_addr_reg;
+        AWSIZE  = w_size_reg;
+        AWLEN   = w_len_reg[3:0] - 1'b1;
+        AWBURST = 2'b01;
+        AWVALID = aw_pending;
+
         WID      = ID_VAL;
         WDATA    = tx_data;
-        WSTRB    = ((w_size_reg == 3'b000) ? 4'b0001 : (w_size_reg == 3'b001) ? 4'b0011 : 4'b1111) << w_addr_reg[1:0];
         WLAST    = (w_burst_count == (w_len_reg[3:0] - 1'b1));
-        WVALID   = 1'b0;
-        tx_ready = 1'b0;
-        BREADY   = 1'b0;
+        WVALID   = w_pending & tx_valid; 
+        tx_ready = w_pending & WREADY;   
 
-        case (write_state)
-            W_ADDR: AWVALID = 1'b1;
-            W_DATA: begin
-                WVALID   = tx_valid;
-                tx_ready = WREADY;
-            end
-            W_RESP: BREADY = 1'b1;
-        endcase
+        unshifted_strb = (128'b1 << (1 << w_size_reg)) - 1;
+        addr_offset    = w_addr_reg & ((DATA_WIDTH/8) - 1);
+        WSTRB          = unshifted_strb << addr_offset;
+
+        
+        BREADY = write_active;
+
+        ARID    = ID_VAL;
+        ARADDR  = r_addr_reg;
+        ARSIZE  = r_size_reg;
+        ARLEN   = r_len_reg[3:0] - 1'b1;
+        ARBURST = 2'b01;
+        ARVALID = ar_pending;
+
+        RREADY   = read_active & rx_ready;
+        rx_valid = read_active & RVALID;
+        rx_data  = RDATA;
     end
 
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
-            write_state   <= W_IDLE;
+            write_active  <= 1'b0;
+            aw_pending    <= 1'b0;
+            w_pending     <= 1'b0;
             w_burst_count <= 4'd0;
-            w_addr_reg    <= {ADDR_WIDTH{1'b0}};
-            w_size_reg    <= 3'd0;
-            w_len_reg     <= 16'd0;
+            
+            aw_addr_reg <= {ADDR_WIDTH{1'b0}};
+            w_addr_reg  <= {ADDR_WIDTH{1'b0}};
+            w_size_reg  <= 3'd0;
+            w_len_reg   <= 16'd0;
         end else begin
-            case (write_state)
-                W_IDLE: begin
-                    w_burst_count <= 4'd0;
-                    if (cmd_valid && cmd_rnw) begin
-                        write_state <= W_ADDR;
-                        w_addr_reg  <= cmd_addr;
-                        w_size_reg  <= cmd_size;
-                        w_len_reg   <= cmd_len;
-                    end
-                end
-                W_ADDR: if (AWREADY) write_state <= W_DATA;
-                W_DATA: begin
-                    if (WREADY && WVALID) begin
-                        w_addr_reg <= w_addr_reg + (1 << w_size_reg);
-                        if (!WLAST) w_burst_count <= w_burst_count + 1'b1;
-                        else write_state <= W_RESP;
-                    end
-                end
-                W_RESP: begin
-                    if (BVALID) write_state <= (BRESP == 2'b10 || BRESP == 2'b11) ? W_ERR : W_IDLE;
-                end
-                W_ERR: write_state <= W_IDLE; 
-                default: write_state <= W_IDLE;
-            endcase
+            if (cmd_valid && cmd_rnw && !write_active) begin
+                write_active  <= 1'b1;
+                aw_pending    <= 1'b1;
+                w_pending     <= 1'b1;
+                w_burst_count <= 4'd0;
+                
+                aw_addr_reg <= cmd_addr;
+                w_addr_reg  <= cmd_addr;
+                w_size_reg  <= cmd_size;
+                w_len_reg   <= cmd_len;
+            end
+            
+            if (aw_pending && AWREADY) begin
+                aw_pending <= 1'b0;
+            end
+            
+            if (w_pending && WVALID && WREADY) begin
+                w_addr_reg <= (w_addr_reg + (1 << w_size_reg)) & w_align_mask;
+                
+                if (WLAST) w_pending <= 1'b0;
+                else       w_burst_count <= w_burst_count + 1'b1;
+            end
+            
+            if (write_active && BVALID && BREADY) begin
+                write_active <= 1'b0;
+            end
         end
     end
 
-    always @(*) begin
-        ARID     = ID_VAL;
-        ARSIZE   = r_size_reg; 
-        ARBURST  = 2'b01;  
-        ARADDR   = r_addr_reg;
-        ARLEN    = r_len_reg[3:0] - 1'b1;
-        ARVALID  = 1'b0;
-        
-        RREADY   = 1'b0;
-        rx_valid = 1'b0;
-        rx_data  = RDATA; 
-
-        case (read_state)
-            R_ADDR: ARVALID = 1'b1;
-            R_DATA: begin
-                RREADY   = rx_ready;
-                rx_valid = RVALID;
-            end
-        endcase
-    end
-
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
-            read_state <= R_IDLE;
+            read_active <= 1'b0;
+            ar_pending  <= 1'b0;
+            
             r_addr_reg <= {ADDR_WIDTH{1'b0}};
             r_size_reg <= 3'd0;
             r_len_reg  <= 16'd0;
         end else begin
-            case (read_state)
-                R_IDLE: begin
-                    if (cmd_valid && !cmd_rnw) begin
-                        read_state <= R_ADDR;
-                        r_addr_reg <= cmd_addr;
-                        r_size_reg <= cmd_size;
-                        r_len_reg  <= cmd_len;
-                    end
-                end
-                R_ADDR: if (ARREADY) read_state <= R_DATA;
-                R_DATA: begin
-                    if (RVALID && RREADY) begin
-                        if (RRESP == 2'b10 || RRESP == 2'b11) read_state <= R_ERR;
-                        else if (RLAST) read_state <= R_IDLE;
-                    end
-                end
-                R_ERR: read_state <= R_IDLE;
-                default: read_state <= R_IDLE;
-            endcase
+            if (cmd_valid && !cmd_rnw && !read_active) begin
+                read_active <= 1'b1;
+                ar_pending  <= 1'b1;
+                
+                r_addr_reg <= cmd_addr;
+                r_size_reg <= cmd_size;
+                r_len_reg  <= cmd_len;
+            end
+            
+            if (ar_pending && ARREADY) begin
+                ar_pending <= 1'b0;
+            end
+            
+            if (read_active && RVALID && RREADY && RLAST) begin
+                read_active <= 1'b0;
+            end
         end
     end
 
