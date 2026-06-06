@@ -10,8 +10,12 @@ module fifo #(parameter D_size=8, parameter A_size=5) (
 
     wire [A_size:0] wr_ptr_g, rd_ptr_g;   
     wire [A_size:0] wr_ptr_bin, rd_ptr_bin;
-    wire [A_size:0] wr_ptr_sync, rd_ptr_sync; 
+    
+    reg [A_size:0] wr_ptr_sync, rd_ptr_sync;  
+    
+    reg [A_size:0] wr_ptr_sync_q1, rd_ptr_sync_q1; 
 
+    
     fifo_mem #(D_size, (1<<A_size), A_size) memory_bank (
         .wr_clk(w_clk),
         .wr_ptr(wr_ptr_bin[A_size-1:0]), 
@@ -26,7 +30,7 @@ module fifo #(parameter D_size=8, parameter A_size=5) (
         .w_clk(w_clk),
         .w_reset(w_reset),
         .w_inc(w_inc),
-        .rd_ptr_sync(rd_ptr_sync),
+        .rd_ptr_sync(rd_ptr_sync), 
         .wr_ptr_g(wr_ptr_g),
         .wr_ptr_bin(wr_ptr_bin),
         .full(full)
@@ -36,20 +40,30 @@ module fifo #(parameter D_size=8, parameter A_size=5) (
         .r_clk(r_clk),
         .r_reset(r_reset),
         .r_inc(r_inc),
-        .wr_ptr_sync(wr_ptr_sync),
+        .wr_ptr_sync(wr_ptr_sync), 
         .rd_ptr_g(rd_ptr_g),
         .rd_ptr_bin(rd_ptr_bin),
         .empty(empty)
     );
 
-    synchronizer #(A_size) sync_r2w (
-        .clk(w_clk), .reset(w_reset),
-        .d_in(rd_ptr_g), .d_out(rd_ptr_sync)
-    );
+    always @(posedge w_clk or posedge w_reset) begin
+        if (w_reset) begin
+            rd_ptr_sync_q1 <= 0;
+            rd_ptr_sync    <= 0;
+        end else begin
+            rd_ptr_sync_q1 <= rd_ptr_g;
+            rd_ptr_sync    <= rd_ptr_sync_q1;
+        end
+    end
 
-    synchronizer #(A_size) sync_w2r (
-        .clk(r_clk), .reset(r_reset),
-        .d_in(wr_ptr_g), .d_out(wr_ptr_sync)
-    );
+    always @(posedge r_clk or posedge r_reset) begin
+        if (r_reset) begin
+            wr_ptr_sync_q1 <= 0;
+            wr_ptr_sync    <= 0;
+        end else begin
+            wr_ptr_sync_q1 <= wr_ptr_g;
+            wr_ptr_sync    <= wr_ptr_sync_q1;
+        end
+    end
 
 endmodule
