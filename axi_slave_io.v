@@ -19,14 +19,14 @@ module axi_slave_io #(
     input  wire [2:0]                AWSIZE,
     input  wire [1:0]                AWBURST,
     input  wire                      AWVALID,
-    output reg                       AWREADY,
+    output wire                      AWREADY,
 
     input  wire [ID_WIDTH-1:0]       WID,
     input  wire [DATA_WIDTH-1:0]     WDATA,
     input  wire [(DATA_WIDTH/8)-1:0] WSTRB,
     input  wire                      WLAST,
     input  wire                      WVALID,
-    output reg                       WREADY,
+    output wire                      WREADY,
 
     output reg  [ID_WIDTH-1:0]       BID,
     output reg  [1:0]                BRESP,
@@ -39,29 +39,28 @@ module axi_slave_io #(
     input  wire [2:0]                ARSIZE,
     input  wire [1:0]                ARBURST,
     input  wire                      ARVALID,
-    output reg                       ARREADY,
+    output wire                      ARREADY,
 
     output reg  [ID_WIDTH-1:0]       RID,
-    output reg  [DATA_WIDTH-1:0]     RDATA,
-    output reg  [1:0]                RRESP,
-    output reg                       RLAST,
-    output reg                       RVALID,
+    output wire [DATA_WIDTH-1:0]     RDATA,
+    output wire [1:0]                RRESP,
+    output wire                      RLAST,
+    output wire                      RVALID,
     input  wire                      RREADY,
 
-    output reg                       TX_FIFO_WR_EN,
-    output reg  [DATA_WIDTH-1:0]     TX_FIFO_WDATA,
+    output wire                      TX_FIFO_WR_EN,
+    output wire [DATA_WIDTH-1:0]     TX_FIFO_WDATA,
     input  wire                      TX_FIFO_FULL,
 
-    output reg                       RX_FIFO_RD_EN,
+    output wire                      RX_FIFO_RD_EN,
     input  wire [DATA_WIDTH-1:0]     RX_FIFO_RDATA,
     input  wire                      RX_FIFO_EMPTY
 );
 
-    localparam [1:0] W_IDLE = 2'd0, W_DATA = 2'd1, W_RESP = 2'd2;
-    
-    reg [1:0]          write_state;
-    reg                w_err_latch;
-    reg [ID_WIDTH-1:0] latched_awid;
+ 
+    reg                  aw_latched;
+    reg                  w_err_latch;
+    reg [ID_WIDTH-1:0]   latched_awid;
 
     wire aw_size_err   = ((1 << AWSIZE) > (DATA_WIDTH / 8)); 
     wire aw_burst_err  = (AWBURST == 2'b00 && !SUPPORT_FIXED) || 
@@ -70,65 +69,47 @@ module axi_slave_io #(
     wire aw_addr_err   = (AWADDR != TX_ADDR);
     wire aw_error_flag = (!ALLOW_WRITE) | aw_size_err | aw_burst_err | aw_addr_err;
 
-    always @(*) begin
-        AWREADY       = 1'b0;
-        WREADY        = 1'b0;
-        BVALID        = 1'b0;
-        BRESP         = w_err_latch ? 2'b10 : 2'b00; 
-        BID           = latched_awid;
-        
-        TX_FIFO_WR_EN = 1'b0;
-        TX_FIFO_WDATA = WDATA; 
-
-        case (write_state)
-            W_IDLE: begin
-                AWREADY = 1'b1;
-            end
-            W_DATA: begin
-                WREADY = w_err_latch ? 1'b1 : !TX_FIFO_FULL;
-                if (WVALID && WREADY && !w_err_latch) begin
-                    TX_FIFO_WR_EN = 1'b1;
-                end
-            end
-            W_RESP: begin
-                BVALID = 1'b1;
-            end
-        endcase
-    end
+    
+    assign AWREADY = ~aw_latched && ~BVALID; 
+    
+    assign WREADY  = aw_latched && (w_err_latch || ~TX_FIFO_FULL);
+	 
+    assign TX_FIFO_WR_EN = WVALID && WREADY && !w_err_latch && (WSTRB != 0);
+    assign TX_FIFO_WDATA = WDATA; 
 
     always @(posedge ACLK or negedge ARESETN) begin
         if (!ARESETN) begin
-            write_state  <= W_IDLE;
+            aw_latched   <= 1'b0;
             w_err_latch  <= 1'b0;
             latched_awid <= {ID_WIDTH{1'b0}};
+            BID          <= {ID_WIDTH{1'b0}};
+            BRESP        <= 2'b00;
+            BVALID       <= 1'b0;
         end else begin
-            case (write_state)
-                W_IDLE: begin
-                    if (AWVALID) begin
-                        write_state  <= W_DATA;
-                        w_err_latch  <= aw_error_flag;
-                        latched_awid <= AWID;
-                    end
+            if (BVALID && BREADY) begin
+                BVALID <= 1'b0;
+            end
+            if (AWVALID && AWREADY) begin
+                aw_latched   <= 1'b1;
+                w_err_latch  <= aw_error_flag;
+                latched_awid <= AWID;
+            end
+            if (WVALID && WREADY) begin
+                if (WLAST) begin
+                    aw_latched <= 1'b0;
+                    BID        <= latched_awid;
+                    BRESP      <= w_err_latch ? 2'b10 : 2'b00;
+                    BVALID     <= 1'b1;
                 end
-                W_DATA: begin
-                    if (WVALID && WREADY) begin
-                        if (WLAST) write_state <= W_RESP;
-                    end
-                end
-                W_RESP: begin
-                    if (BREADY) write_state <= W_IDLE;
-                end
-            endcase
+            end
         end
     end
 
-    localparam [1:0] R_IDLE = 2'd0, R_DATA = 2'd1;
-    
-    reg [1:0]          read_state;
-    reg                r_err_latch;
-    reg [3:0]          r_len_latch;
-    reg [3:0]          read_count;
-    reg [ID_WIDTH-1:0] latched_arid;
+    reg                  ar_latched; 
+    reg                  r_err_latch;
+    reg [3:0]            r_len_latch;
+    reg [3:0]            read_count;
+    reg [ID_WIDTH-1:0]   latched_arid;
 
     wire ar_size_err   = ((1 << ARSIZE) > (DATA_WIDTH / 8));
     wire ar_burst_err  = (ARBURST == 2'b00 && !SUPPORT_FIXED) || 
@@ -137,59 +118,43 @@ module axi_slave_io #(
     wire ar_addr_err   = (ARADDR != RX_ADDR);
     wire ar_error_flag = (!ALLOW_READ) | ar_size_err | ar_burst_err | ar_addr_err;
 
-    always @(*) begin
-        ARREADY       = 1'b0;
-        RVALID        = 1'b0;
-        RLAST         = 1'b0;
-        RRESP         = r_err_latch ? 2'b10 : 2'b00;
-        RDATA         = r_err_latch ? {DATA_WIDTH{1'b0}} : RX_FIFO_RDATA; 
-        RID           = latched_arid;
-        
-        RX_FIFO_RD_EN = 1'b0;
+    assign ARREADY = ~ar_latched;
+    
+    assign RVALID  = ar_latched && (r_err_latch || ~RX_FIFO_EMPTY);
+    
+    assign RLAST   = (read_count == r_len_latch);
+    assign RRESP   = r_err_latch ? 2'b10 : 2'b00;
+    
+    assign RDATA   = r_err_latch ? {DATA_WIDTH{1'b0}} : RX_FIFO_RDATA; 
 
-        case (read_state)
-            R_IDLE: begin
-                ARREADY = 1'b1;
-            end
-            R_DATA: begin
-                RVALID = r_err_latch ? 1'b1 : !RX_FIFO_EMPTY;
-                RLAST  = (read_count == r_len_latch) && RVALID;
-                
-                if (RVALID && RREADY && !r_err_latch) begin
-                    RX_FIFO_RD_EN = 1'b1;
-                end
-            end
-        endcase
-    end
+    
+    assign RX_FIFO_RD_EN = RVALID && RREADY && !r_err_latch;
 
     always @(posedge ACLK or negedge ARESETN) begin
         if (!ARESETN) begin
-            read_state   <= R_IDLE;
+            ar_latched   <= 1'b0;
             r_err_latch  <= 1'b0;
             r_len_latch  <= 4'd0;
             latched_arid <= {ID_WIDTH{1'b0}};
             read_count   <= 4'd0;
+            RID          <= {ID_WIDTH{1'b0}};
         end else begin
-            case (read_state)
-                R_IDLE: begin
-                    if (ARVALID) begin
-                        read_state   <= R_DATA;
-                        r_err_latch  <= ar_error_flag;
-                        r_len_latch  <= ARLEN;
-                        latched_arid <= ARID;
-                        read_count   <= 4'd0;
-                    end 
+            if (ARVALID && ARREADY) begin
+                ar_latched   <= 1'b1;
+                r_err_latch  <= ar_error_flag;
+                r_len_latch  <= ARLEN;
+                latched_arid <= ARID;
+                read_count   <= 4'd0;
+                RID          <= ARID;
+            end
+
+            if (RVALID && RREADY) begin
+                if (RLAST) begin
+                    ar_latched <= 1'b0; 
+                end else begin
+                    read_count <= read_count + 1'b1;
                 end
-                R_DATA: begin
-                    if (RVALID && RREADY) begin
-                        if (read_count == r_len_latch) begin
-                            read_state <= R_IDLE;
-                        end else begin
-                            read_count <= read_count + 1'b1;
-                        end
-                    end
-                end
-            endcase
+            end
         end
     end
 
