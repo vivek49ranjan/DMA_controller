@@ -42,15 +42,15 @@ module dmac_controller #(
 );
 
     localparam [3:0] C_IDLE = 4'd0, 
-							C_FETCH_REQ = 4'd1, 
-							C_FETCH_WAIT = 4'd2, 
-							C_DISPATCH = 4'd3, 
-							C_WAIT_ENG = 4'd4, 
-							C_UPDATE_REQ = 4'd5, 
-							C_UPDATE_WAIT= 4'd6, 
-							C_NEXT = 4'd7, 
-							C_DONE = 4'd8, 
-							C_ERROR = 4'd9;
+                     C_FETCH_REQ = 4'd1, 
+                     C_FETCH_WAIT = 4'd2, 
+                     C_DISPATCH = 4'd3, 
+                     C_WAIT_ENG = 4'd4, 
+                     C_UPDATE_REQ = 4'd5, 
+                     C_UPDATE_WAIT= 4'd6, 
+                     C_NEXT = 4'd7, 
+                     C_DONE = 4'd8, 
+                     C_ERROR = 4'd9;
 
     reg [31:0] reg_ctrl, reg_status, reg_curr_desc_ptr, reg_irq_clear;     
     reg global_error;
@@ -75,7 +75,7 @@ module dmac_controller #(
         end else begin
             if (reg_ctrl[0])      reg_ctrl[0]      <= 1'b0; 
             if (reg_irq_clear[0]) reg_irq_clear[0] <= 1'b0; 
-            if (c_state == C_UPDATE_REQ && cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready && ctrl_cmd_req) reg_curr_desc_ptr <= current_desc[0];
+            if (c_state == C_UPDATE_REQ && cmd_valid && write_cmd_ready) reg_curr_desc_ptr <= current_desc[0];
             if (cmd_error) global_error <= 1'b1;
             else if (reg_irq_clear[0]) global_error <= 1'b0;
         end
@@ -87,11 +87,11 @@ module dmac_controller #(
         else begin
             case (c_state)
                 C_IDLE:        if (reg_ctrl[0]) c_next_state = C_FETCH_REQ;
-                C_FETCH_REQ:   if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready && ctrl_cmd_req) c_next_state = C_FETCH_WAIT;
+                C_FETCH_REQ:   if (cmd_valid && read_cmd_ready) c_next_state = C_FETCH_WAIT;
                 C_FETCH_WAIT:  if (read_cmd_done) c_next_state = C_DISPATCH;
                 C_DISPATCH:    c_next_state = C_WAIT_ENG;
                 C_WAIT_ENG:    if (read_engine_done && write_engine_done) c_next_state = C_UPDATE_REQ;
-                C_UPDATE_REQ:  if (cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready && ctrl_cmd_req) c_next_state = C_UPDATE_WAIT;
+                C_UPDATE_REQ:  if (cmd_valid && write_cmd_ready) c_next_state = C_UPDATE_WAIT;
                 C_UPDATE_WAIT: if (write_cmd_done) c_next_state = C_NEXT;
                 C_NEXT:        c_next_state = (current_desc[0] == 32'd0) ? C_DONE : C_FETCH_REQ;
                 C_DONE:        if (reg_irq_clear[0]) c_next_state = C_IDLE;
@@ -109,37 +109,37 @@ module dmac_controller #(
             case (c_state)
                 C_IDLE: begin
                     desc_ptr <= 3'd0; 
-						  ctrl_cmd_req <= 1'b0;
+                    ctrl_cmd_req <= 1'b0;
                     if (reg_ctrl[0]) reg_status[0] <= 1'b1; 
                 end
-                C_FETCH_REQ: begin
-                    ctrl_cmd_req <= 1'b1; 
-                    if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready && ctrl_cmd_req) ctrl_cmd_req <= 1'b0;
-                end
+					C_FETCH_REQ: begin
+						 ctrl_cmd_req <= 1'b1; 
+						 if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready) ctrl_cmd_req <= 1'b0;
+					end
                 C_FETCH_WAIT: begin
                     if (rx_valid && rx_ready) begin
                         current_desc[desc_ptr] <= rx_data;
                         desc_ptr <= desc_ptr + 1'b1;
                     end
                 end
-                C_UPDATE_REQ: begin
-                    ctrl_cmd_req <= 1'b1; 
-						  current_desc[6] <= 32'd1; 
-                    if (cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready && ctrl_cmd_req) ctrl_cmd_req <= 1'b0;
-                end
+					C_UPDATE_REQ: begin
+						 ctrl_cmd_req <= 1'b1; 
+						 current_desc[6] <= 32'd1; 
+						 if (cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready) ctrl_cmd_req <= 1'b0;
+					end
                 C_DONE: begin
                     cpu_intr <= 1'b1; 
-						  reg_status[1] <= 1'b1; 
-						  reg_status[0] <= 1'b0; 
+                    reg_status[1] <= 1'b1; 
+                    reg_status[0] <= 1'b0; 
                     if (reg_irq_clear[0]) cpu_intr <= 1'b0;
                 end
                 C_ERROR: begin
                     cpu_intr <= 1'b1; 
-						  reg_status[2] <= 1'b1; 
-						  reg_status[0] <= 1'b0; 
+                    reg_status[2] <= 1'b1; 
+                    reg_status[0] <= 1'b0; 
                     if (reg_irq_clear[0]) begin 
-								cpu_intr <= 1'b0; reg_status[2] <= 1'b0; 
-						  end
+                        cpu_intr <= 1'b0; reg_status[2] <= 1'b0; 
+                    end
                 end
             endcase
         end
@@ -151,10 +151,10 @@ module dmac_controller #(
 
     always @(*) begin
         fifo_wr_en = 1'b0; 
-		  fifo_wdata = {DATA_WIDTH{1'b0}};
+        fifo_wdata = {DATA_WIDTH{1'b0}};
         if (r_state == R_STREAM && rx_valid && !fifo_full) begin
             fifo_wr_en = 1'b1; 
-				fifo_wdata = rx_data;
+            fifo_wdata = rx_data;
         end
     end
 
@@ -166,13 +166,14 @@ module dmac_controller #(
                 R_IDLE: begin
                     if (disp_start) begin r_state <= R_REQ; read_cmd_req <= 1'b1; end
                 end
-                R_REQ: begin
-                    if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready && read_cmd_req) begin
-                        read_cmd_req <= 1'b0; 
-								r_state <= R_STREAM;
-                    end
-                    if (global_error) r_state <= R_IDLE; 
-                end
+               R_REQ: begin
+						 // Must check cmd_rnw == 0 to know it's a read grant
+						 if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready) begin 
+							  read_cmd_req <= 1'b0; 
+							  r_state <= R_STREAM;
+						 end
+						 if (global_error) r_state <= R_IDLE; 
+					end
                 R_STREAM: if (read_cmd_done || global_error) r_state <= R_IDLE;
             endcase
         end
@@ -190,12 +191,13 @@ module dmac_controller #(
                 W_IDLE: begin
                     if (disp_start) begin w_state <= W_REQ; write_cmd_req <= 1'b1; end
                 end
-                W_REQ: begin
-                    if (cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready && write_cmd_req) begin
-                        write_cmd_req <= 1'b0; w_state <= W_STREAM;
-                    end
-                    if (global_error) w_state <= W_IDLE; 
-                end
+					W_REQ: begin
+						 if (cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready) begin 
+							  write_cmd_req <= 1'b0; 
+							  w_state <= W_STREAM;
+						 end
+						 if (global_error) w_state <= W_IDLE; 
+					end
                 W_STREAM: begin
                     if (write_cmd_done || global_error) w_state <= W_IDLE;
                 end
@@ -205,22 +207,22 @@ module dmac_controller #(
 
     always @(*) begin
         cmd_valid = 1'b0; 
-		  cmd_addr = 0; 
-		  cmd_len = 0; 
-		  cmd_size = 0; 
-		  cmd_rnw = 0; 
-		  rx_ready = 0; 
-		  tx_valid = 0; 
-		  tx_data = 0;
-        fifo_rd_en = 1'b0; 
+        cmd_addr = 0; 
+        cmd_len = 0; 
+        cmd_size = 0; 
+        cmd_rnw = 0; 
+        rx_ready = 0; 
+        tx_valid = 0; 
+        tx_data = 0;
+        fifo_rd_en = 1'b0;
 
         if (c_state == C_UPDATE_WAIT) begin
             tx_valid = 1'b1; 
-				tx_data  = current_desc[6];
+            tx_data  = current_desc[6];
         end else if (w_state == W_STREAM) begin
             tx_valid = !fifo_empty; 
             tx_data  = fifo_rdata;
-            if (tx_valid && tx_ready) fifo_rd_en = 1'b1; 
+            if (tx_valid && tx_ready) fifo_rd_en = 1'b1;
         end
 
         if (c_state == C_FETCH_REQ || c_state == C_UPDATE_REQ) begin
