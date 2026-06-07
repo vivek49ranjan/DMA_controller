@@ -167,7 +167,6 @@ module dmac_controller #(
                     if (disp_start) begin r_state <= R_REQ; read_cmd_req <= 1'b1; end
                 end
                R_REQ: begin
-						 // Must check cmd_rnw == 0 to know it's a read grant
 						 if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready) begin 
 							  read_cmd_req <= 1'b0; 
 							  r_state <= R_STREAM;
