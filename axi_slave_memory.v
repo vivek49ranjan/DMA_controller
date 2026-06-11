@@ -17,14 +17,14 @@ module axi_slave_memory #(
     input  wire [2:0]                AWSIZE,
     input  wire [1:0]                AWBURST,
     input  wire                      AWVALID,
-    output wire                      AWREADY,
+    output reg                       AWREADY,
 
     input  wire [ID_WIDTH-1:0]       WID,
     input  wire [DATA_WIDTH-1:0]     WDATA,
     input  wire [(DATA_WIDTH/8)-1:0] WSTRB,
     input  wire                      WLAST,
     input  wire                      WVALID,
-    output wire                      WREADY,
+    output reg                       WREADY,
 
     output reg  [ID_WIDTH-1:0]       BID,
     output reg  [1:0]                BRESP,
@@ -37,94 +37,137 @@ module axi_slave_memory #(
     input  wire [2:0]                ARSIZE,
     input  wire [1:0]                ARBURST,
     input  wire                      ARVALID,
-    output wire                      ARREADY,
+    output reg                       ARREADY,
 
     output reg  [ID_WIDTH-1:0]       RID,
-    output wire [DATA_WIDTH-1:0]     RDATA,
-    output wire [1:0]                RRESP,
-    output wire                      RLAST,
-    output wire                      RVALID,
+    output reg  [DATA_WIDTH-1:0]     RDATA,
+    output reg  [1:0]                RRESP,
+    output reg                       RLAST,
+    output reg                       RVALID,
     input  wire                      RREADY,
 
-    output wire                      MEMORY_WR_EN,
-    output wire [ADDR_WIDTH-1:0]     MEMORY_WR_AD,
-    output wire [DATA_WIDTH-1:0]     MEMORY_WDATA,
-    output wire [(DATA_WIDTH/8)-1:0] MEMORY_WSTRB,
+    output reg                       MEMORY_WR_EN,
+    output reg  [ADDR_WIDTH-1:0]     MEMORY_WR_AD,
+    output reg  [DATA_WIDTH-1:0]     MEMORY_WDATA,
+    output reg  [(DATA_WIDTH/8)-1:0] MEMORY_WSTRB,
     input  wire                      MEMORY_WR_BUSY,
 
-    output wire                      MEMORY_RD_EN,
-    output wire [ADDR_WIDTH-1:0]     MEMORY_RD_AD,
+    output reg                       MEMORY_RD_EN,
+    output reg  [ADDR_WIDTH-1:0]     MEMORY_RD_AD,
     input  wire [DATA_WIDTH-1:0]     MEMORY_RDATA,
     input  wire                      MEMORY_RD_BUSY
 );
 
    
-    reg                  aw_latched; 
+    localparam WR_IDLE = 2'b00;
+    localparam WR_DATA = 2'b01;
+    localparam WR_RESP = 2'b10;
+
+    reg [1:0]            wr_state, wr_next_state;
     reg                  w_err_latch;
     reg [ID_WIDTH-1:0]   latched_awid;
     reg [2:0]            latched_awsize;
     reg [1:0]            latched_awburst; 
     reg [ADDR_WIDTH-1:0] wr_addr_reg;
 
-    wire aw_size_err   = ((1 << AWSIZE) > (DATA_WIDTH / 8)); 
-    wire aw_burst_err  = (AWBURST == 2'b00 && !SUPPORT_FIXED) || 
-                         (AWBURST == 2'b01 && !SUPPORT_INCR)  || 
-                         (AWBURST == 2'b10 && !SUPPORT_WRAP);
-    wire aw_error_flag = (!ALLOW_WRITE) | aw_size_err | aw_burst_err;
-    
-    wire [ADDR_WIDTH-1:0] w_align_mask = ~((1 << latched_awsize) - 1);
+    always @(*) begin
+        wr_next_state = wr_state;
+        AWREADY       = 1'b0;
+        WREADY        = 1'b0;
+        MEMORY_WR_EN  = 1'b0;
+        MEMORY_WR_AD  = wr_addr_reg;
+        MEMORY_WDATA  = WDATA;
+        MEMORY_WSTRB  = WSTRB;
 
-    assign AWREADY = ~aw_latched && ~BVALID; 
-    assign WREADY  = aw_latched && ~MEMORY_WR_BUSY;
+        case (wr_state)
+            WR_IDLE: begin
+                AWREADY = 1'b1;
+                if (AWVALID) begin
+                    wr_next_state = WR_DATA;
+                end
+            end
 
-    assign MEMORY_WR_EN = WVALID && WREADY && !w_err_latch && (WSTRB != 0);
-    assign MEMORY_WR_AD = wr_addr_reg;
-    assign MEMORY_WDATA = WDATA;
-    assign MEMORY_WSTRB = WSTRB;
+            WR_DATA: begin
+                WREADY = ~MEMORY_WR_BUSY;
+                if (WVALID && WREADY) begin
+                    if (!w_err_latch && (WSTRB != 0)) begin
+                        MEMORY_WR_EN = 1'b1;
+                    end
+                    
+                    if (WLAST) begin
+                        wr_next_state = WR_RESP;
+                    end
+                end
+            end
+
+            WR_RESP: begin
+                if (BVALID && BREADY) begin
+                    wr_next_state = WR_IDLE;
+                end
+            end
+            
+            default: wr_next_state = WR_IDLE;
+        endcase
+    end
 
     always @(posedge ACLK or negedge ARESETN) begin
         if (!ARESETN) begin
-            aw_latched      <= 1'b0;
+            wr_state        <= WR_IDLE;
             w_err_latch     <= 1'b0;
             latched_awid    <= {ID_WIDTH{1'b0}};
             latched_awsize  <= 3'd0;
             latched_awburst <= 2'b00;
             wr_addr_reg     <= {ADDR_WIDTH{1'b0}};
-            
             BID             <= {ID_WIDTH{1'b0}};
             BRESP           <= 2'b00;
             BVALID          <= 1'b0;
         end else begin
-            if (BVALID && BREADY) begin
-                BVALID <= 1'b0;
-            end
+            wr_state <= wr_next_state;
 
-            if (AWVALID && AWREADY) begin
-                aw_latched      <= 1'b1;
-                w_err_latch     <= aw_error_flag;
-                latched_awid    <= AWID;
-                latched_awsize  <= AWSIZE;
-                latched_awburst <= AWBURST; 
-                wr_addr_reg     <= AWADDR;
-            end
+            case (wr_state)
+                WR_IDLE: begin
+                    if (AWVALID && AWREADY) begin
+                        latched_awid    <= AWID;
+                        latched_awsize  <= AWSIZE;
+                        latched_awburst <= AWBURST; 
+                        wr_addr_reg     <= AWADDR;
+                        
+                        w_err_latch     <= (!ALLOW_WRITE) || 
+                                           ((1 << AWSIZE) > (DATA_WIDTH / 8)) ||
+                                           (AWBURST == 2'b00 && !SUPPORT_FIXED) ||
+                                           (AWBURST == 2'b01 && !SUPPORT_INCR) ||
+                                           (AWBURST == 2'b10 && !SUPPORT_WRAP);
+                    end
+                end
 
-            if (WVALID && WREADY) begin
-                if (!w_err_latch && latched_awburst == 2'b01) begin
-                    wr_addr_reg <= (wr_addr_reg + (1 << latched_awsize)) & w_align_mask;
+                WR_DATA: begin
+                    if (WVALID && WREADY) begin
+                        if (!w_err_latch && latched_awburst == 2'b01) begin
+                            wr_addr_reg <= (wr_addr_reg + (1 << latched_awsize)) & ~((1 << latched_awsize) - 1);
+                        end
+                        
+                        if (WLAST) begin
+                            BID    <= latched_awid;
+                            BRESP  <= w_err_latch ? 2'b10 : 2'b00;
+                            BVALID <= 1'b1;
+                        end
+                    end
                 end
-                
-                if (WLAST) begin
-                    aw_latched <= 1'b0;
-                    BID        <= latched_awid;
-                    BRESP      <= w_err_latch ? 2'b10 : 2'b00;
-                    BVALID     <= 1'b1;
+
+                WR_RESP: begin
+                    if (BVALID && BREADY) begin
+                        BVALID <= 1'b0;
+                    end
                 end
-            end
+            endcase
         end
     end
 
 
-    reg                  ar_latched; 
+    localparam RD_IDLE = 1'b0;
+    localparam RD_DATA = 1'b1;
+
+    reg                  rd_state, rd_next_state;
     reg                  r_err_latch;
     reg [3:0]            r_len_latch;
     reg [3:0]            read_count;
@@ -133,58 +176,87 @@ module axi_slave_memory #(
     reg [1:0]            latched_arburst; 
     reg [ADDR_WIDTH-1:0] rd_addr_reg;
 
-    wire ar_size_err   = ((1 << ARSIZE) > (DATA_WIDTH / 8));
-    wire ar_burst_err  = (ARBURST == 2'b00 && !SUPPORT_FIXED) || 
-                         (ARBURST == 2'b01 && !SUPPORT_INCR)  || 
-                         (ARBURST == 2'b10 && !SUPPORT_WRAP);
-    wire ar_error_flag = (!ALLOW_READ) | ar_size_err | ar_burst_err;
+    always @(*) begin
+        rd_next_state = rd_state;
+        ARREADY       = 1'b0;
+        RVALID        = 1'b0;
+        RLAST         = 1'b0;
+        RRESP         = 2'b00;
+        RDATA         = MEMORY_RDATA;
+        MEMORY_RD_EN  = 1'b0;
+        MEMORY_RD_AD  = rd_addr_reg;
 
-    wire [ADDR_WIDTH-1:0] r_align_mask = ~((1 << latched_arsize) - 1);
+        case (rd_state)
+            RD_IDLE: begin
+                ARREADY = 1'b1;
+                if (ARVALID) begin
+                    rd_next_state = RD_DATA;
+                end
+            end
 
-    assign ARREADY = ~ar_latched;
-    assign RVALID  = ar_latched && ~MEMORY_RD_BUSY;
-    assign RLAST   = (read_count == r_len_latch);
-    assign RRESP   = r_err_latch ? 2'b10 : 2'b00;
-    assign RDATA   = MEMORY_RDATA;
+            RD_DATA: begin
+                RVALID = ~MEMORY_RD_BUSY;
+                RLAST  = (read_count == r_len_latch);
+                RRESP  = r_err_latch ? 2'b10 : 2'b00;
 
-    assign MEMORY_RD_EN = RVALID && RREADY && !r_err_latch;
-    assign MEMORY_RD_AD = rd_addr_reg;
+                if (RVALID && RREADY && !r_err_latch) begin
+                    MEMORY_RD_EN = 1'b1;
+                end
+
+                if (RVALID && RREADY && RLAST) begin
+                    rd_next_state = RD_IDLE;
+                end
+            end
+            
+            default: rd_next_state = RD_IDLE;
+        endcase
+    end
 
     always @(posedge ACLK or negedge ARESETN) begin
         if (!ARESETN) begin
-            ar_latched      <= 1'b0;
+            rd_state        <= RD_IDLE;
             r_err_latch     <= 1'b0;
             r_len_latch     <= 4'd0;
+            read_count      <= 4'd0;
             latched_arid    <= {ID_WIDTH{1'b0}};
             latched_arsize  <= 3'd0;
             latched_arburst <= 2'b00;
-            read_count      <= 4'd0;
             rd_addr_reg     <= {ADDR_WIDTH{1'b0}};
             RID             <= {ID_WIDTH{1'b0}};
         end else begin
-            if (ARVALID && ARREADY) begin
-                ar_latched      <= 1'b1;
-                r_err_latch     <= ar_error_flag;
-                r_len_latch     <= ARLEN;
-                latched_arid    <= ARID;
-                latched_arsize  <= ARSIZE;
-                latched_arburst <= ARBURST; 
-                read_count      <= 4'd0;
-                rd_addr_reg     <= ARADDR;
-                RID             <= ARID;
-            end
+            rd_state <= rd_next_state;
 
-            if (RVALID && RREADY) begin
-                if (!r_err_latch && latched_arburst == 2'b01) begin
-                    rd_addr_reg <= (rd_addr_reg + (1 << latched_arsize)) & r_align_mask;
+            case (rd_state)
+                RD_IDLE: begin
+                    if (ARVALID && ARREADY) begin
+                        r_len_latch     <= ARLEN;
+                        read_count      <= 4'd0;
+                        latched_arid    <= ARID;
+                        latched_arsize  <= ARSIZE;
+                        latched_arburst <= ARBURST; 
+                        rd_addr_reg     <= ARADDR;
+                        RID             <= ARID;
+                        
+                        r_err_latch     <= (!ALLOW_READ) || 
+                                           ((1 << ARSIZE) > (DATA_WIDTH / 8)) ||
+                                           (ARBURST == 2'b00 && !SUPPORT_FIXED) ||
+                                           (ARBURST == 2'b01 && !SUPPORT_INCR) ||
+                                           (ARBURST == 2'b10 && !SUPPORT_WRAP);
+                    end
                 end
-                
-                if (RLAST) begin
-                    ar_latched <= 1'b0; 
-                end else begin
-                    read_count <= read_count + 1'b1;
+
+                RD_DATA: begin
+                    if (RVALID && RREADY) begin
+                        if (!r_err_latch && latched_arburst == 2'b01) begin
+                            rd_addr_reg <= (rd_addr_reg + (1 << latched_arsize)) & ~((1 << latched_arsize) - 1);
+                        end
+                        
+                        if (!RLAST) begin
+                            read_count <= read_count + 1'b1;
+                        end
+                    end
                 end
-            end
+            endcase
         end
     end
 
