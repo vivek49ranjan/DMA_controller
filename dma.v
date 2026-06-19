@@ -1,6 +1,7 @@
 module dmac_controller #(
     parameter ADDR_WIDTH = 32,
-    parameter DATA_WIDTH = 32
+    parameter DATA_WIDTH = 32,
+    parameter Q_DEPTH_BITS = 2 
 )(
     input  wire                   clk,
     input  wire                   resetn,
@@ -9,17 +10,21 @@ module dmac_controller #(
     output reg  [15:0]            cmd_len,
     output reg  [2:0]             cmd_size,
     output reg                    cmd_rnw,
+    output reg  [Q_DEPTH_BITS:0]  cmd_id,       
     output reg                    cmd_valid,
     input  wire                   read_cmd_ready,
     input  wire                   write_cmd_ready,
+    
     input  wire                   read_cmd_done,
+    input  wire [Q_DEPTH_BITS:0]  read_done_id, 
     input  wire                   write_cmd_done,
+    input  wire [Q_DEPTH_BITS:0]  write_done_id,
     input  wire                   cmd_error,
 
     output reg  [DATA_WIDTH-1:0]  tx_data,
     output reg                    tx_valid,
     input  wire                   tx_ready,
-
+    
     input  wire [DATA_WIDTH-1:0]  rx_data,
     input  wire                   rx_valid,
     output reg                    rx_ready,
@@ -29,221 +34,344 @@ module dmac_controller #(
     input  wire                   reg_wr_en,
     input  wire [ADDR_WIDTH-1:0]  reg_wr_addr,
     input  wire [DATA_WIDTH-1:0]  reg_wdata,
-    input  wire                   reg_rd_en,
-    input  wire [ADDR_WIDTH-1:0]  reg_rd_addr,
-    output reg  [DATA_WIDTH-1:0]  reg_rdata,
-
+    
     output reg                    fifo_wr_en,
     output reg  [DATA_WIDTH-1:0]  fifo_wdata,
     input  wire                   fifo_full,
+    
     output reg                    fifo_rd_en,
     input  wire [DATA_WIDTH-1:0]  fifo_rdata,
     input  wire                   fifo_empty
 );
 
-    localparam [3:0] C_IDLE = 4'd0, 
-                     C_FETCH_REQ = 4'd1, 
-                     C_FETCH_WAIT = 4'd2, 
-                     C_DISPATCH = 4'd3, 
-                     C_WAIT_ENG = 4'd4, 
-                     C_UPDATE_REQ = 4'd5, 
-                     C_UPDATE_WAIT= 4'd6, 
-                     C_NEXT = 4'd7, 
-                     C_DONE = 4'd8, 
-                     C_ERROR = 4'd9;
+    reg [31:0] desc_queue [0:3][0:7];
+    reg [1:0]  alloc_ptr;   
+    reg [1:0]  disp_ptr;    
+    reg [1:0]  commit_ptr;  
+
+    reg [3:0]  valid_slots; 
+    reg [3:0]  read_issued;
+    reg [3:0]  read_completed, write_completed;
+
+    wire queue_full  = (alloc_ptr + 1'b1 == commit_ptr) && valid_slots[alloc_ptr];
+    
+    reg  fetch_desc_update;
+    reg  [31:0] fetch_desc_next_ptr;
 
     reg [31:0] reg_ctrl, reg_status, reg_curr_desc_ptr, reg_irq_clear;     
     reg global_error;
-
-    reg [3:0] c_state, c_next_state;
-    reg [2:0] desc_ptr;
-    reg [31:0] current_desc [0:7];
     
-    wire       disp_start = (c_state == C_DISPATCH);
-    wire       read_engine_done, write_engine_done;
-    reg        ctrl_cmd_req, read_cmd_req, write_cmd_req;
+    reg running;
+    reg end_of_chain_fetched; 
+
+    localparam U_IDLE = 2'd0, U_REQ = 2'd1, U_WAIT = 2'd2;
+    reg [1:0] u_state;
+    reg [2:0] desc_count; 
+
+    wire is_batch_end  = (desc_count == 3'd7) || (desc_queue[commit_ptr][0] == 32'd0);
+    wire status_retire = (u_state == U_WAIT) && write_cmd_done && (write_done_id == {1'b1, commit_ptr});
+
+    reg [3:0] intr_pending_count;
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            reg_ctrl <= 0; reg_curr_desc_ptr <= 0; reg_irq_clear <= 0; global_error <= 0;
-        end else if (reg_wr_en) begin
-            case (reg_wr_addr[7:0])
-                8'h00: reg_ctrl          <= reg_wdata;
-                8'h14: reg_curr_desc_ptr <= reg_wdata;
-                8'h18: reg_irq_clear     <= reg_wdata;
-            endcase
+            reg_ctrl           <= 32'd0;
+            reg_status         <= 32'd0;
+            reg_curr_desc_ptr  <= 32'd0;
+            reg_irq_clear      <= 32'd0;
+            global_error       <= 1'b0;
+            cpu_intr           <= 1'b0;
+            running            <= 1'b0; 
+            intr_pending_count <= 4'd0;
         end else begin
-            if (reg_ctrl[0])      reg_ctrl[0]      <= 1'b0; 
-            if (reg_irq_clear[0]) reg_irq_clear[0] <= 1'b0; 
-            if (c_state == C_UPDATE_REQ && cmd_valid && write_cmd_ready) reg_curr_desc_ptr <= current_desc[0];
-            if (cmd_error) global_error <= 1'b1;
-            else if (reg_irq_clear[0]) global_error <= 1'b0;
-        end
-    end
+            if (cmd_error) 
+                global_error <= 1'b1;
 
-    always @(*) begin
-        c_next_state = c_state; 
-        if (global_error) c_next_state = C_ERROR;
-        else begin
-            case (c_state)
-                C_IDLE:        if (reg_ctrl[0]) c_next_state = C_FETCH_REQ;
-                C_FETCH_REQ:   if (cmd_valid && read_cmd_ready) c_next_state = C_FETCH_WAIT;
-                C_FETCH_WAIT:  if (read_cmd_done) c_next_state = C_DISPATCH;
-                C_DISPATCH:    c_next_state = C_WAIT_ENG;
-                C_WAIT_ENG:    if (read_engine_done && write_engine_done) c_next_state = C_UPDATE_REQ;
-                C_UPDATE_REQ:  if (cmd_valid && write_cmd_ready) c_next_state = C_UPDATE_WAIT;
-                C_UPDATE_WAIT: if (write_cmd_done) c_next_state = C_NEXT;
-                C_NEXT:        c_next_state = (current_desc[0] == 32'd0) ? C_DONE : C_FETCH_REQ;
-                C_DONE:        if (reg_irq_clear[0]) c_next_state = C_IDLE;
-                C_ERROR:       if (reg_irq_clear[0]) c_next_state = C_IDLE;
-                default: c_next_state = C_IDLE;
-            endcase
-        end
-    end
-
-    always @(posedge clk or negedge resetn) begin
-        if (!resetn) begin
-            c_state <= C_IDLE; ctrl_cmd_req <= 1'b0; desc_ptr <= 3'd0; cpu_intr <= 1'b0; reg_status <= 32'd0;
-        end else begin
-            c_state <= c_next_state;
-            case (c_state)
-                C_IDLE: begin
-                    desc_ptr <= 3'd0; 
-                    ctrl_cmd_req <= 1'b0;
-                    if (reg_ctrl[0]) reg_status[0] <= 1'b1; 
+            if (reg_irq_clear[0]) begin
+                reg_irq_clear[0] <= 1'b0;
+                global_error     <= 1'b0; 
+                reg_status       <= 32'd0; 
+                
+                if (!(status_retire && is_batch_end) && intr_pending_count > 0) begin
+                    intr_pending_count <= intr_pending_count - 1'b1;
+                    if (intr_pending_count == 4'd1) cpu_intr <= 1'b0;
                 end
-					C_FETCH_REQ: begin
-						 ctrl_cmd_req <= 1'b1; 
-						 if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready) ctrl_cmd_req <= 1'b0;
-					end
-                C_FETCH_WAIT: begin
-                    if (rx_valid && rx_ready) begin
-                        current_desc[desc_ptr] <= rx_data;
-                        desc_ptr <= desc_ptr + 1'b1;
+            end
+            
+            if (reg_ctrl[0]) begin
+                reg_ctrl[0] <= 1'b0; 
+                running     <= 1'b1; 
+            end
+
+            if (end_of_chain_fetched && valid_slots == 4'd0 && u_state == U_IDLE) begin
+                running <= 1'b0;
+            end
+            
+            if (global_error) begin
+                running <= 1'b0;
+            end
+
+            if (reg_wr_en) begin
+                case (reg_wr_addr[7:0])
+                    8'h00: reg_ctrl          <= reg_wdata;
+                    8'h14: reg_curr_desc_ptr <= reg_wdata;
+                    8'h18: reg_irq_clear     <= reg_wdata;
+                    default: ; 
+                endcase
+            end else if (fetch_desc_update) begin
+                reg_curr_desc_ptr <= fetch_desc_next_ptr;
+            end
+
+            if (status_retire && is_batch_end) begin
+                reg_status <= reg_status | 32'h0000_0002;
+                
+                if (!reg_irq_clear[0]) begin
+                    intr_pending_count <= intr_pending_count + 1'b1;
+                    cpu_intr           <= 1'b1;
+                end
+            end
+        end
+    end
+
+   
+    localparam F_IDLE = 2'd0, F_REQ = 2'd1, F_WAIT = 2'd2;
+    reg [1:0] f_state;
+    reg [2:0] word_count;
+    
+    localparam D_IDLE = 2'd0, D_ISSUE_RD = 2'd1, D_ISSUE_WR = 2'd2;
+    reg [1:0] d_state;
+
+    wire grant_u    = (u_state == U_REQ);
+    wire grant_f    = (f_state == F_REQ) && !grant_u;
+    wire grant_d_rd = (d_state == D_ISSUE_RD) && !grant_u && !grant_f;
+    wire grant_d_wr = (d_state == D_ISSUE_WR) && !grant_u && !grant_f;
+
+    wire rx_is_fetch = (read_done_id[Q_DEPTH_BITS] == 1'b1);
+
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin
+            f_state <= F_IDLE;
+            alloc_ptr <= 2'd0;
+            word_count <= 3'd0;
+            valid_slots <= 4'd0;
+            fetch_desc_update <= 1'b0;
+            fetch_desc_next_ptr <= 32'd0;
+            end_of_chain_fetched <= 1'b0;
+        end else begin
+            fetch_desc_update <= 1'b0;
+            
+            if (reg_ctrl[0]) end_of_chain_fetched <= 1'b0;
+
+            case (f_state)
+                F_IDLE: begin
+                     if ((reg_ctrl[0] || running) && !end_of_chain_fetched && !queue_full && !global_error) begin
+                          f_state <= F_REQ;
+                     end
+                end
+                F_REQ: begin
+                    if (grant_f && read_cmd_ready) begin
+                        f_state <= F_WAIT;
+                        word_count <= 3'd0;
                     end
                 end
-					C_UPDATE_REQ: begin
-						 ctrl_cmd_req <= 1'b1; 
-						 current_desc[6] <= 32'd1; 
-						 if (cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready) ctrl_cmd_req <= 1'b0;
-					end
-                C_DONE: begin
-                    cpu_intr <= 1'b1; 
-                    reg_status[1] <= 1'b1; 
-                    reg_status[0] <= 1'b0; 
-                    if (reg_irq_clear[0]) cpu_intr <= 1'b0;
-                end
-                C_ERROR: begin
-                    cpu_intr <= 1'b1; 
-                    reg_status[2] <= 1'b1; 
-                    reg_status[0] <= 1'b0; 
-                    if (reg_irq_clear[0]) begin 
-                        cpu_intr <= 1'b0; reg_status[2] <= 1'b0; 
+                F_WAIT: begin
+                    if (rx_valid && rx_ready && rx_is_fetch) begin
+                        desc_queue[alloc_ptr][word_count] <= rx_data;
+                        word_count <= word_count + 1'b1;
+                        if (word_count == 3'd7) begin 
+                            valid_slots[alloc_ptr] <= 1'b1;
+                            fetch_desc_update <= 1'b1;
+                            fetch_desc_next_ptr <= desc_queue[alloc_ptr][0];
+                            
+                            if (desc_queue[alloc_ptr][0] == 32'd0)
+                                end_of_chain_fetched <= 1'b1;
+                                
+                            alloc_ptr <= alloc_ptr + 1'b1;
+                            f_state <= F_IDLE;
+                        end
                     end
                 end
+                default: f_state <= F_IDLE;
             endcase
+            
+            if (status_retire) begin
+                 valid_slots[commit_ptr] <= 1'b0;
+            end
         end
     end
 
-    localparam [1:0] R_IDLE = 2'd0, R_REQ = 2'd1, R_STREAM = 2'd2;
-    reg [1:0] r_state;
-    assign read_engine_done = (r_state == R_IDLE);
-
-    always @(*) begin
-        fifo_wr_en = 1'b0; 
-        fifo_wdata = {DATA_WIDTH{1'b0}};
-        if (r_state == R_STREAM && rx_valid && !fifo_full) begin
-            fifo_wr_en = 1'b1; 
-            fifo_wdata = rx_data;
-        end
-    end
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            r_state <= R_IDLE; read_cmd_req <= 1'b0;
+            d_state <= D_IDLE;
+            disp_ptr <= 2'd0;
+            read_issued <= 4'd0;
         end else begin
-            case (r_state)
-                R_IDLE: begin
-                    if (disp_start) begin r_state <= R_REQ; read_cmd_req <= 1'b1; end
+            case (d_state)
+                D_IDLE: begin
+                    if (valid_slots[disp_ptr] && !read_issued[disp_ptr]) begin
+                        d_state <= D_ISSUE_RD;
+                    end
                 end
-               R_REQ: begin
-						 if (cmd_valid && cmd_rnw == 1'b0 && read_cmd_ready) begin 
-							  read_cmd_req <= 1'b0; 
-							  r_state <= R_STREAM;
-						 end
-						 if (global_error) r_state <= R_IDLE; 
-					end
-                R_STREAM: if (read_cmd_done || global_error) r_state <= R_IDLE;
+                D_ISSUE_RD: begin
+                    if (grant_d_rd && read_cmd_ready) begin
+                        read_issued[disp_ptr] <= 1'b1;
+                        d_state <= D_ISSUE_WR;
+                    end
+                end
+                D_ISSUE_WR: begin
+                    if (grant_d_wr && write_cmd_ready) begin
+                        disp_ptr <= disp_ptr + 1'b1;
+                        d_state <= D_IDLE;
+                    end
+                end
+                default: d_state <= D_IDLE;
             endcase
+
+            if (status_retire) begin
+                read_issued[commit_ptr] <= 1'b0;
+            end
         end
     end
 
-    localparam [1:0] W_IDLE = 2'd0, W_REQ = 2'd1, W_STREAM = 2'd2;
-    reg [1:0] w_state;
-    assign write_engine_done = (w_state == W_IDLE);
-
+    
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            w_state <= W_IDLE; write_cmd_req <= 1'b0;
+            u_state <= U_IDLE;
+            commit_ptr <= 2'd0;
+            read_completed <= 4'd0;
+            write_completed <= 4'd0;
+            desc_count <= 3'd0;
         end else begin
-            case (w_state)
-                W_IDLE: begin
-                    if (disp_start) begin w_state <= W_REQ; write_cmd_req <= 1'b1; end
+            if (read_cmd_done && read_done_id[Q_DEPTH_BITS] == 1'b0)  
+                read_completed[read_done_id[Q_DEPTH_BITS-1:0]] <= 1'b1;
+                
+            if (write_cmd_done && write_done_id[Q_DEPTH_BITS] == 1'b0) 
+                write_completed[write_done_id[Q_DEPTH_BITS-1:0]] <= 1'b1;
+
+            case (u_state)
+                U_IDLE: begin
+                    if (valid_slots[commit_ptr] && read_completed[commit_ptr] && write_completed[commit_ptr]) begin
+                        u_state <= U_REQ;
+                    end
                 end
-					W_REQ: begin
-						 if (cmd_valid && cmd_rnw == 1'b1 && write_cmd_ready) begin 
-							  write_cmd_req <= 1'b0; 
-							  w_state <= W_STREAM;
-						 end
-						 if (global_error) w_state <= W_IDLE; 
-					end
-                W_STREAM: begin
-                    if (write_cmd_done || global_error) w_state <= W_IDLE;
+                U_REQ: begin 
+                    if (grant_u && write_cmd_ready) begin
+                        u_state <= U_WAIT;
+                    end
                 end
+                U_WAIT: begin
+                    if (status_retire) begin
+                        commit_ptr <= commit_ptr + 1'b1;
+                        
+                        if (is_batch_end) begin
+                            desc_count <= 3'd0; 
+                        end else begin
+                            desc_count <= desc_count + 1'b1;
+                        end
+                        
+                        u_state <= U_IDLE;
+                    end
+                end
+                default: u_state <= U_IDLE;
             endcase
+
+            if (status_retire) begin
+                read_completed[commit_ptr]  <= 1'b0;
+                write_completed[commit_ptr] <= 1'b0;
+            end
         end
     end
 
+   
     always @(*) begin
-        cmd_valid = 1'b0; 
-        cmd_addr = 0; 
-        cmd_len = 0; 
-        cmd_size = 0; 
-        cmd_rnw = 0; 
-        rx_ready = 0; 
-        tx_valid = 0; 
-        tx_data = 0;
-        fifo_rd_en = 1'b0;
+        cmd_valid = 1'b0;
+        cmd_rnw   = 1'b0;
+        cmd_addr  = 32'd0;
+        cmd_len   = 16'd0;
+        cmd_size  = 3'b010;
+        cmd_id    = {(Q_DEPTH_BITS+1){1'b0}};
 
-        if (c_state == C_UPDATE_WAIT) begin
-            tx_valid = 1'b1; 
-            tx_data  = current_desc[6];
-        end else if (w_state == W_STREAM) begin
-            tx_valid = !fifo_empty; 
-            tx_data  = fifo_rdata;
-            if (tx_valid && tx_ready) fifo_rd_en = 1'b1;
-        end
-
-        if (c_state == C_FETCH_REQ || c_state == C_UPDATE_REQ) begin
-            cmd_valid = ctrl_cmd_req;
-            cmd_rnw   = (c_state == C_UPDATE_REQ) ? 1'b1 : 1'b0;
+        if (u_state == U_REQ) begin
+            cmd_valid = 1'b1;
+            cmd_rnw   = 1'b1;
+            cmd_addr  = desc_queue[commit_ptr][6];
+            cmd_len   = 16'd1;
+            cmd_id    = {1'b1, commit_ptr}; 
+        end else if (f_state == F_REQ) begin
+            cmd_valid = 1'b1;
+            cmd_rnw   = 1'b0;
             cmd_addr  = reg_curr_desc_ptr;
-            cmd_len   = (c_state == C_UPDATE_REQ) ? 16'd1 : 16'd8; 
-            cmd_size  = 3'b010; 
-        end 
-        else if (r_state == R_REQ) begin
-            cmd_valid = read_cmd_req; cmd_rnw = 1'b0; 
-            cmd_addr  = current_desc[2]; 
-            cmd_len   = current_desc[4][15:0]; cmd_size = current_desc[4][18:16];
-        end 
-        else if (w_state == W_REQ) begin
-            cmd_valid = write_cmd_req; cmd_rnw = 1'b1; 
-            cmd_addr  = current_desc[3]; 
-            cmd_len   = current_desc[4][15:0]; cmd_size = current_desc[4][18:16];
+            cmd_len   = 16'd8;
+            cmd_id    = {1'b1, alloc_ptr};  
+        end else if (d_state == D_ISSUE_RD) begin
+            cmd_valid = 1'b1;
+            cmd_rnw   = 1'b0;
+            cmd_addr  = desc_queue[disp_ptr][2]; 
+            cmd_len   = desc_queue[disp_ptr][4][15:0];
+            cmd_id    = {1'b0, disp_ptr};   
+        end else if (d_state == D_ISSUE_WR) begin
+            cmd_valid = 1'b1;
+            cmd_rnw   = 1'b1;
+            cmd_addr  = desc_queue[disp_ptr][3]; 
+            cmd_len   = desc_queue[disp_ptr][4][15:0];
+            cmd_id    = {1'b0, disp_ptr};   
         end
+    end
 
-        if (c_state == C_FETCH_WAIT) rx_ready = 1'b1;
-        else if (r_state == R_STREAM) rx_ready = !fifo_full;
+
+    reg aw_channel_busy;
+    reg aw_is_status_write;
+
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin
+            aw_channel_busy    <= 1'b0;
+            aw_is_status_write <= 1'b0;
+        end else begin
+            if (cmd_valid && cmd_rnw && write_cmd_ready) begin
+                aw_channel_busy    <= 1'b1;
+                aw_is_status_write <= (u_state == U_REQ); 
+            end else if (write_cmd_done) begin
+                aw_channel_busy    <= 1'b0;
+            end
+        end
+    end
+
+    reg status_sent;
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin
+            status_sent <= 1'b0;
+        end else begin
+            if (cmd_valid && cmd_rnw && write_cmd_ready) begin
+                status_sent <= 1'b0; 
+            end else if (aw_channel_busy && aw_is_status_write && tx_valid && tx_ready) begin
+                status_sent <= 1'b1;
+            end
+        end
+    end
+
+    wire w_data_active    = aw_channel_busy || (cmd_valid && cmd_rnw && write_cmd_ready);
+    wire w_data_is_status = (cmd_valid && cmd_rnw && write_cmd_ready) ? (u_state == U_REQ) : aw_is_status_write;
+
+   
+    always @(*) begin
+        rx_ready   = (rx_is_fetch) ? (f_state == F_WAIT) : !fifo_full;
+        fifo_wr_en = (rx_valid && !rx_is_fetch && !fifo_full);
+        fifo_wdata = rx_data;
+        
+        if (w_data_active && w_data_is_status) begin
+            tx_data    = 32'h0000_0001; 
+            tx_valid   = !status_sent; 
+            fifo_rd_en = 1'b0;          
+        end else if (w_data_active && !w_data_is_status) begin
+            tx_data    = fifo_rdata;
+            tx_valid   = !fifo_empty;
+            fifo_rd_en = (tx_valid && tx_ready);
+        end else begin
+            tx_data    = 32'd0;
+            tx_valid   = 1'b0;
+            fifo_rd_en = 1'b0;
+        end
     end
 
 endmodule
