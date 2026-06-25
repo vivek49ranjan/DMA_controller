@@ -104,36 +104,23 @@ module axi_router #(
         end
     endgenerate
 
-    always @(posedge ACLK or negedge ARESETn) begin
+	 always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
             w_head <= 0; w_tail <= 0; w_count <= 0;
             b_head <= 0; b_tail <= 0; b_count <= 0;
         end else begin
             if (S_AWVALID && S_AWREADY) begin
                 w_target_fifo[w_tail] <= is_aw_m0 ? 4'd0 : {1'b1, aw_io_idx};
-                w_tail <= w_tail + 1'b1;
-                w_count <= w_count + 1'b1;
-                
                 b_target_fifo[b_tail] <= is_aw_m0 ? 4'd0 : {1'b1, aw_io_idx};
+                w_tail <= w_tail + 1'b1;
                 b_tail <= b_tail + 1'b1;
-                b_count <= b_count + 1'b1;
             end
             
-            if (S_WVALID && S_WREADY && S_WLAST) begin
-                w_head <= w_head + 1'b1;
-                w_count <= w_count - 1'b1;
-            end
-            if ((S_AWVALID && S_AWREADY) && (S_WVALID && S_WREADY && S_WLAST)) begin
-                w_count <= w_count;
-            end
-            
-            if (S_BVALID && S_BREADY) begin
-                b_head <= b_head + 1'b1;
-                b_count <= b_count - 1'b1;
-            end
-            if ((S_AWVALID && S_AWREADY) && (S_BVALID && S_BREADY)) begin
-                b_count <= b_count;
-            end
+            if (S_WVALID && S_WREADY && S_WLAST) w_head <= w_head + 1'b1;
+            if (S_BVALID && S_BREADY)            b_head <= b_head + 1'b1;
+
+            w_count <= w_count + (S_AWVALID && S_AWREADY) - (S_WVALID && S_WREADY && S_WLAST);
+            b_count <= b_count + (S_AWVALID && S_AWREADY) - (S_BVALID && S_BREADY);
         end
     end
 
