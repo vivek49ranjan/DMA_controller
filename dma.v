@@ -200,7 +200,6 @@ module dmac_controller #(
         end
     end
 
-
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             d_state <= D_IDLE;
@@ -234,7 +233,6 @@ module dmac_controller #(
         end
     end
 
-    
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             u_state <= U_IDLE;
@@ -263,6 +261,8 @@ module dmac_controller #(
                 U_WAIT: begin
                     if (status_retire) begin
                         commit_ptr <= commit_ptr + 1'b1;
+                        read_completed[commit_ptr]  <= 1'b0;
+                        write_completed[commit_ptr] <= 1'b0;
                         
                         if (is_batch_end) begin
                             desc_count <= 3'd0; 
@@ -275,21 +275,15 @@ module dmac_controller #(
                 end
                 default: u_state <= U_IDLE;
             endcase
-
-            if (status_retire) begin
-                read_completed[commit_ptr]  <= 1'b0;
-                write_completed[commit_ptr] <= 1'b0;
-            end
         end
     end
 
-   
-    always @(*) begin
+   always @(*) begin
         cmd_valid = 1'b0;
         cmd_rnw   = 1'b0;
         cmd_addr  = 32'd0;
         cmd_len   = 16'd0;
-        cmd_size  = 3'b010;
+        cmd_size  = 3'b010; 
         cmd_id    = {(Q_DEPTH_BITS+1){1'b0}};
 
         if (u_state == U_REQ) begin
@@ -297,61 +291,67 @@ module dmac_controller #(
             cmd_rnw   = 1'b1;
             cmd_addr  = desc_queue[commit_ptr][6];
             cmd_len   = 16'd1;
+            cmd_size  = 3'b010; 
             cmd_id    = {1'b1, commit_ptr}; 
         end else if (f_state == F_REQ) begin
             cmd_valid = 1'b1;
             cmd_rnw   = 1'b0;
             cmd_addr  = reg_curr_desc_ptr;
             cmd_len   = 16'd8;
+            cmd_size  = 3'b010; 
             cmd_id    = {1'b1, alloc_ptr};  
         end else if (d_state == D_ISSUE_RD) begin
             cmd_valid = 1'b1;
             cmd_rnw   = 1'b0;
             cmd_addr  = desc_queue[disp_ptr][2]; 
             cmd_len   = desc_queue[disp_ptr][4][15:0];
+            cmd_size  = desc_queue[disp_ptr][4][18:16]; 
             cmd_id    = {1'b0, disp_ptr};   
         end else if (d_state == D_ISSUE_WR) begin
             cmd_valid = 1'b1;
             cmd_rnw   = 1'b1;
             cmd_addr  = desc_queue[disp_ptr][3]; 
             cmd_len   = desc_queue[disp_ptr][4][15:0];
+            cmd_size  = desc_queue[disp_ptr][4][18:16];
             cmd_id    = {1'b0, disp_ptr};   
         end
     end
 
-
-    reg aw_channel_busy;
-    reg aw_is_status_write;
+    reg [16:0] tx_cmd_q [0:3]; 
+    reg [1:0]  tx_q_head, tx_q_tail;
+    reg [2:0]  tx_q_count;
+    reg [15:0] tx_beat_cnt;
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            aw_channel_busy    <= 1'b0;
-            aw_is_status_write <= 1'b0;
+            tx_q_head <= 2'd0;
+            tx_q_tail <= 2'd0;
+            tx_q_count <= 3'd0;
+            tx_beat_cnt <= 16'd0;
         end else begin
             if (cmd_valid && cmd_rnw && write_cmd_ready) begin
-                aw_channel_busy    <= 1'b1;
-                aw_is_status_write <= (u_state == U_REQ); 
-            end else if (write_cmd_done) begin
-                aw_channel_busy    <= 1'b0;
+                tx_cmd_q[tx_q_tail] <= {(u_state == U_REQ), cmd_len};
+                tx_q_tail <= tx_q_tail + 1'b1;
             end
+
+            if (tx_valid && tx_ready) begin
+                if (tx_beat_cnt == tx_cmd_q[tx_q_head][15:0] - 1'b1) begin
+                    tx_beat_cnt <= 16'd0;
+                    tx_q_head <= tx_q_head + 1'b1;
+                end else begin
+                    tx_beat_cnt <= tx_beat_cnt + 1'b1;
+                end
+            end
+
+            if ((cmd_valid && cmd_rnw && write_cmd_ready) && !(tx_valid && tx_ready && (tx_beat_cnt == tx_cmd_q[tx_q_head][15:0] - 1'b1)))
+                tx_q_count <= tx_q_count + 1'b1;
+            else if (!(cmd_valid && cmd_rnw && write_cmd_ready) && (tx_valid && tx_ready && (tx_beat_cnt == tx_cmd_q[tx_q_head][15:0] - 1'b1)))
+                tx_q_count <= tx_q_count - 1'b1;
         end
     end
 
-    reg status_sent;
-    always @(posedge clk or negedge resetn) begin
-        if (!resetn) begin
-            status_sent <= 1'b0;
-        end else begin
-            if (cmd_valid && cmd_rnw && write_cmd_ready) begin
-                status_sent <= 1'b0; 
-            end else if (aw_channel_busy && aw_is_status_write && tx_valid && tx_ready) begin
-                status_sent <= 1'b1;
-            end
-        end
-    end
-
-    wire w_data_active    = aw_channel_busy || (cmd_valid && cmd_rnw && write_cmd_ready);
-    wire w_data_is_status = (cmd_valid && cmd_rnw && write_cmd_ready) ? (u_state == U_REQ) : aw_is_status_write;
+    wire tx_active    = (tx_q_count > 0);
+    wire tx_is_status = tx_cmd_q[tx_q_head][16];
 
    
     always @(*) begin
@@ -359,15 +359,16 @@ module dmac_controller #(
         fifo_wr_en = (rx_valid && !rx_is_fetch && !fifo_full);
         fifo_wdata = rx_data;
         
-        if (w_data_active && w_data_is_status) begin
+        if (tx_active && tx_is_status) begin
             tx_data    = 32'h0000_0001; 
-            tx_valid   = !status_sent; 
+            tx_valid   = 1'b1;          
             fifo_rd_en = 1'b0;          
-        end else if (w_data_active && !w_data_is_status) begin
+        end else if (tx_active && !tx_is_status) begin
             tx_data    = fifo_rdata;
             tx_valid   = !fifo_empty;
             fifo_rd_en = (tx_valid && tx_ready);
         end else begin
+            // Idle
             tx_data    = 32'd0;
             tx_valid   = 1'b0;
             fifo_rd_en = 1'b0;
