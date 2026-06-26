@@ -170,8 +170,7 @@ module axi_slave_memory #(
     wire [ADDR_WIDTH-1:0] w_align_mask = ~((32'd1 << aw_size_q[aw_head]) - 1);
     wire w_is_unsupported = (aw_burst_q[aw_head] != 2'b01); 
 
-    assign WREADY = (aw_count > 0) && !MEMORY_WR_BUSY && !BVALID;
-
+    assign WREADY = (aw_count > 0) && !MEMORY_WR_BUSY && !BVALID && (WID == aw_id_q[aw_head]);
     always @(*) begin
         MEMORY_WR_EN = WVALID && WREADY && (WSTRB != 0) && !w_is_unsupported;
         MEMORY_WDATA = WDATA;
