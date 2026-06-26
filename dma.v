@@ -58,7 +58,7 @@ module dmac_controller #(
     reg  fetch_desc_update;
     reg  [31:0] fetch_desc_next_ptr;
 
-    reg [31:0] reg_ctrl, reg_status, reg_curr_desc_ptr, reg_irq_clear;     
+    reg [31:0] reg_ctrl, reg_curr_desc_ptr, reg_irq_clear;     
     reg global_error;
     
     reg running;
@@ -76,7 +76,6 @@ module dmac_controller #(
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             reg_ctrl           <= 32'd0;
-            reg_status         <= 32'd0;
             reg_curr_desc_ptr  <= 32'd0;
             reg_irq_clear      <= 32'd0;
             global_error       <= 1'b0;
@@ -90,7 +89,6 @@ module dmac_controller #(
             if (reg_irq_clear[0]) begin
                 reg_irq_clear[0] <= 1'b0;
                 global_error     <= 1'b0; 
-                reg_status       <= 32'd0; 
                 
                 if (!(status_retire && is_batch_end) && intr_pending_count > 0) begin
                     intr_pending_count <= intr_pending_count - 1'b1;
@@ -123,8 +121,6 @@ module dmac_controller #(
             end
 
             if (status_retire && is_batch_end) begin
-                reg_status <= reg_status | 32'h0000_0002;
-                
                 if (!reg_irq_clear[0]) begin
                     intr_pending_count <= intr_pending_count + 1'b1;
                     cpu_intr           <= 1'b1;
@@ -368,7 +364,6 @@ module dmac_controller #(
             tx_valid   = !fifo_empty;
             fifo_rd_en = (tx_valid && tx_ready);
         end else begin
-            // Idle
             tx_data    = 32'd0;
             tx_valid   = 1'b0;
             fifo_rd_en = 1'b0;
