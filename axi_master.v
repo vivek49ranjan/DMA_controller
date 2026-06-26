@@ -25,6 +25,7 @@ module axi_master #(
     input  wire [DATA_WIDTH-1:0]     tx_data,
     input  wire                      tx_valid,
     output reg                       tx_ready,
+	 
     output reg  [DATA_WIDTH-1:0]     rx_data,
     output reg                       rx_valid,
     input  wire                      rx_ready,
@@ -65,7 +66,6 @@ module axi_master #(
     output reg                       RREADY
 );
 
-   
     reg [2:0] outstanding_reads;
     wire read_pipeline_full = (outstanding_reads == 3'd4);
 
@@ -109,23 +109,42 @@ module axi_master #(
         end
     end
 
+   
+    localparam MAX_W_OUT = 4; 
     
     reg [2:0] outstanding_writes;
-    reg [3:0] w_beat_cnt;
-    reg [3:0] awlen_store;
     
-    wire write_pipeline_full = (outstanding_writes != 3'd0);
+    reg [1:0] aw_head; 
+    reg [1:0] w_tail;  
+    reg [1:0] b_tail;  
+    
+    reg [3:0] awlen_buffer [0:MAX_W_OUT-1];
+	 reg [ID_WIDTH-1:0] wid_buffer   [0:MAX_W_OUT-1]; 
+    reg [MAX_W_OUT-1:0] add_valid; 
+
+    reg [3:0] w_beat_cnt;
+    
+    wire write_pipeline_full = (outstanding_writes == 3'd4);
+    
+    wire [3:0] current_awlen = awlen_buffer[w_tail];
+    wire w_channel_active = add_valid[w_tail]; 
 
     always @(*) begin
         write_cmd_ready = !write_pipeline_full && !AWVALID;
     end
 
+    integer i;
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
             AWVALID <= 1'b0;
             outstanding_writes <= 3'd0;
+            aw_head <= 2'd0;
+            w_tail <= 2'd0;
+            b_tail <= 2'd0;
             w_beat_cnt <= 4'd0;
-            awlen_store <= 4'd0;
+            for (i=0; i<MAX_W_OUT; i=i+1) add_valid[i] <= 1'b0;
+            for (i=0; i<MAX_W_OUT; i=i+1) awlen_buffer[i] <= 4'd0;
+				for (i=0; i<MAX_W_OUT; i=i+1) wid_buffer[i] <= {ID_WIDTH{1'b0}}; 
         end else begin
             if (cmd_valid && cmd_rnw && write_cmd_ready) begin
                 AWVALID <= 1'b1;
@@ -134,41 +153,53 @@ module axi_master #(
                 AWSIZE  <= cmd_size;
                 AWID    <= cmd_id;
                 AWBURST <= 2'b01;
-                awlen_store <= cmd_len[3:0] - 1'b1;
             end else if (AWVALID && AWREADY) begin
                 AWVALID <= 1'b0;
             end
-
+            if (AWVALID && AWREADY) begin
+                awlen_buffer[aw_head] <= AWLEN;
+					 wid_buffer[aw_head]   <= AWID;      
+                add_valid[aw_head] <= 1'b1;
+                aw_head <= aw_head + 1'b1;
+            end
+				
             if (AWVALID && AWREADY && !(BVALID && BREADY))
                 outstanding_writes <= outstanding_writes + 1'b1;
             else if (!(AWVALID && AWREADY) && (BVALID && BREADY))
                 outstanding_writes <= outstanding_writes - 1'b1;
-
             if (WVALID && WREADY) begin
-                if (w_beat_cnt == awlen_store)
+                if (w_beat_cnt == current_awlen) begin
                     w_beat_cnt <= 4'd0;
-                else
+                    w_tail <= w_tail + 1'b1;
+                end else begin
                     w_beat_cnt <= w_beat_cnt + 1'b1;
+                end
+            end
+            if (BVALID && BREADY) begin
+                add_valid[b_tail] <= 1'b0; 
+                b_tail <= b_tail + 1'b1;
             end
         end
     end
 
     always @(*) begin
-        WVALID = tx_valid;
-        tx_ready = WREADY;
+        WVALID = tx_valid && w_channel_active; 
+        tx_ready = WREADY && w_channel_active;
         WDATA = tx_data;
-        
-        WID = {ID_WIDTH{1'b0}}; 
-        WSTRB = {(DATA_WIDTH/8){1'b1}};
-        cmd_error = 1'b0;
-        WLAST = (w_beat_cnt == awlen_store);
+        WID   = wid_buffer[w_tail];             
+        WLAST = (w_beat_cnt == current_awlen);
         
         BREADY = 1'b1; 
+		  
+        cmd_error = 1'b0;
         write_cmd_done = 1'b0;
         write_done_id  = BID[Q_DEPTH_BITS:0];
         
         if (BVALID && BREADY) begin
             write_cmd_done = 1'b1;
+            if (BRESP != 2'b00) begin
+                cmd_error = 1'b1; 
+            end
         end
     end
 
