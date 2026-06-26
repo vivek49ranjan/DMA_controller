@@ -65,6 +65,7 @@ module axi_router #(
     input  wire [7:0]                    M_IO_RLAST
 );
 
+    
     wire is_aw_m0  = (S_AWADDR[31:28] == 4'h0);
     wire is_aw_io  = (S_AWADDR[31:28] == 4'h4);
     wire [2:0] aw_io_idx = S_AWADDR[22:20];
@@ -73,131 +74,105 @@ module axi_router #(
     wire is_ar_io  = (S_ARADDR[31:28] == 4'h4);
     wire [2:0] ar_io_idx = S_ARADDR[22:20];
 
-    reg [3:0] w_target_fifo [0:3];
-    reg [1:0] w_head, w_tail;
-    reg [2:0] w_count;
-    wire w_fifo_full  = (w_count == 3'd4);
-    wire w_fifo_empty = (w_count == 3'd0);
-
-    reg [3:0] b_target_fifo [0:3];
-    reg [1:0] b_head, b_tail;
-    reg [2:0] b_count;
-    wire b_fifo_full  = (b_count == 3'd4);
-    wire b_fifo_empty = (b_count == 3'd0);
-
-    reg [3:0] r_target_fifo [0:3];
-    reg [1:0] r_head, r_tail;
-    reg [2:0] r_count;
-    wire r_fifo_full  = (r_count == 3'd4);
-    wire r_fifo_empty = (r_count == 3'd0);
-
    
-    assign S_AWREADY = is_aw_m0 ? (M0_AWREADY && !w_fifo_full && !b_fifo_full) : 
-                       is_aw_io ? (M_IO_AWREADY[aw_io_idx] && !w_fifo_full && !b_fifo_full) : 1'b0;
+    reg [3:0] wr_target_ram [0:3];
+    reg [2:0] aw_ptr, w_ptr, b_ptr; 
 
-    assign M0_AWVALID = S_AWVALID && is_aw_m0 && !w_fifo_full && !b_fifo_full;
+    reg [3:0] rd_target_ram [0:3];
+    reg [2:0] ar_ptr, r_ptr;
+
+    wire wr_full  = (aw_ptr[1:0] == b_ptr[1:0]) && (aw_ptr[2] != b_ptr[2]);
+    wire w_empty  = (w_ptr == aw_ptr);
+    wire b_empty  = (b_ptr == aw_ptr);
+
+    wire rd_full  = (ar_ptr[1:0] == r_ptr[1:0]) && (ar_ptr[2] != r_ptr[2]);
+    wire r_empty  = (r_ptr == ar_ptr);
+
+  
+    assign S_AWREADY  = is_aw_m0 ? (M0_AWREADY && !wr_full) : 
+                        is_aw_io ? (M_IO_AWREADY[aw_io_idx] && !wr_full) : 1'b0;
+    assign M0_AWVALID = S_AWVALID && is_aw_m0 && !wr_full;
 
     genvar i;
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_aw_map
-            assign M_IO_AWVALID[i] = S_AWVALID && is_aw_io && (aw_io_idx == i) && !w_fifo_full && !b_fifo_full;
+            assign M_IO_AWVALID[i] = S_AWVALID && is_aw_io && (aw_io_idx == i) && !wr_full;
         end
     endgenerate
 
-	 always @(posedge ACLK or negedge ARESETn) begin
-        if (!ARESETn) begin
-            w_head <= 0; w_tail <= 0; w_count <= 0;
-            b_head <= 0; b_tail <= 0; b_count <= 0;
-        end else begin
-            if (S_AWVALID && S_AWREADY) begin
-                w_target_fifo[w_tail] <= is_aw_m0 ? 4'd0 : {1'b1, aw_io_idx};
-                b_target_fifo[b_tail] <= is_aw_m0 ? 4'd0 : {1'b1, aw_io_idx};
-                w_tail <= w_tail + 1'b1;
-                b_tail <= b_tail + 1'b1;
-            end
-            
-            if (S_WVALID && S_WREADY && S_WLAST) w_head <= w_head + 1'b1;
-            if (S_BVALID && S_BREADY)            b_head <= b_head + 1'b1;
-
-            w_count <= w_count + (S_AWVALID && S_AWREADY) - (S_WVALID && S_WREADY && S_WLAST);
-            b_count <= b_count + (S_AWVALID && S_AWREADY) - (S_BVALID && S_BREADY);
-        end
-    end
-
-    wire [3:0] w_target = w_target_fifo[w_head];
-    wire w_is_mem       = (w_target == 4'd0);
-    wire [2:0] w_io_idx = w_target[2:0];
-    
-    assign S_WREADY = w_fifo_empty ? 1'b0 : (w_is_mem ? M0_WREADY : M_IO_WREADY[w_io_idx]);
-    assign M0_WVALID = S_WVALID && !w_fifo_empty && w_is_mem;
-    
-    generate
-        for (i = 0; i < 8; i = i + 1) begin : io_w_map
-            assign M_IO_WVALID[i] = S_WVALID && !w_fifo_empty && !w_is_mem && (w_io_idx == i);
-        end
-    endgenerate
-
-    wire [3:0] b_target = b_target_fifo[b_head];
-    wire b_is_mem       = (b_target == 4'd0);
-    wire [2:0] b_io_idx = b_target[2:0];
-    
-    assign S_BVALID = b_fifo_empty ? 1'b0 : (b_is_mem ? M0_BVALID : M_IO_BVALID[b_io_idx]);
-    assign S_BID    = b_is_mem ? M0_BID : M_IO_BID[b_io_idx*ID_WIDTH +: ID_WIDTH];
-    assign S_BRESP  = b_is_mem ? M0_BRESP : M_IO_BRESP[b_io_idx*2 +: 2];
-    
-    assign M0_BREADY = S_BREADY && !b_fifo_empty && b_is_mem;
-    generate
-        for (i = 0; i < 8; i = i + 1) begin : io_b_map
-            assign M_IO_BREADY[i] = S_BREADY && !b_fifo_empty && !b_is_mem && (b_io_idx == i);
-        end
-    endgenerate
-
-    
-    assign S_ARREADY = is_ar_m0 ? (M0_ARREADY && !r_fifo_full) : 
-                       is_ar_io ? (M_IO_ARREADY[ar_io_idx] && !r_fifo_full) : 1'b0;
-
-    assign M0_ARVALID = S_ARVALID && is_ar_m0 && !r_fifo_full;
+    assign S_ARREADY  = is_ar_m0 ? (M0_ARREADY && !rd_full) : 
+                        is_ar_io ? (M_IO_ARREADY[ar_io_idx] && !rd_full) : 1'b0;
+    assign M0_ARVALID = S_ARVALID && is_ar_m0 && !rd_full;
 
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_ar_map
-            assign M_IO_ARVALID[i] = S_ARVALID && is_ar_io && (ar_io_idx == i) && !r_fifo_full;
+            assign M_IO_ARVALID[i] = S_ARVALID && is_ar_io && (ar_io_idx == i) && !rd_full;
         end
     endgenerate
 
+ 
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
-            r_head <= 0; r_tail <= 0; r_count <= 0;
+            aw_ptr <= 0; w_ptr <= 0; b_ptr <= 0;
+            ar_ptr <= 0; r_ptr <= 0;
         end else begin
+            if (S_AWVALID && S_AWREADY) begin
+                wr_target_ram[aw_ptr[1:0]] <= is_aw_m0 ? 4'd0 : {1'b1, aw_io_idx};
+                aw_ptr <= aw_ptr + 1'b1;
+            end
+			if (S_WVALID && S_WREADY && S_WLAST) w_ptr <= w_ptr + 1'b1;
+            if (S_BVALID && S_BREADY)            b_ptr <= b_ptr + 1'b1;
             if (S_ARVALID && S_ARREADY) begin
-                r_target_fifo[r_tail] <= is_ar_m0 ? 4'd0 : {1'b1, ar_io_idx};
-                r_tail <= r_tail + 1'b1;
-                r_count <= r_count + 1'b1;
+                rd_target_ram[ar_ptr[1:0]] <= is_ar_m0 ? 4'd0 : {1'b1, ar_io_idx};
+                ar_ptr <= ar_ptr + 1'b1;
             end
-            if (S_RVALID && S_RREADY && S_RLAST) begin
-                r_head <= r_head + 1'b1;
-                r_count <= r_count - 1'b1;
-            end
-            if ((S_ARVALID && S_ARREADY) && (S_RVALID && S_RREADY && S_RLAST)) begin
-                r_count <= r_count;
-            end
+            if (S_RVALID && S_RREADY && S_RLAST) r_ptr <= r_ptr + 1'b1;
         end
     end
 
-    wire [3:0] r_target = r_target_fifo[r_head];
+
+    wire [3:0] w_target = wr_target_ram[w_ptr[1:0]];
+    wire w_is_mem       = (w_target == 4'd0);
+    wire [2:0] w_io_idx = w_target[2:0];
+    
+    assign S_WREADY  = w_empty ? 1'b0 : (w_is_mem ? M0_WREADY : M_IO_WREADY[w_io_idx]);
+    assign M0_WVALID = S_WVALID && !w_empty && w_is_mem;
+    
+    generate
+        for (i = 0; i < 8; i = i + 1) begin : io_w_map
+            assign M_IO_WVALID[i] = S_WVALID && !w_empty && !w_is_mem && (w_io_idx == i);
+        end
+    endgenerate
+
+    wire [3:0] b_target = wr_target_ram[b_ptr[1:0]];
+    wire b_is_mem       = (b_target == 4'd0);
+    wire [2:0] b_io_idx = b_target[2:0];
+    
+    assign S_BVALID  = b_empty ? 1'b0 : (b_is_mem ? M0_BVALID : M_IO_BVALID[b_io_idx]);
+    assign S_BID     = b_is_mem ? M0_BID : M_IO_BID[b_io_idx*ID_WIDTH +: ID_WIDTH];
+    assign S_BRESP   = b_is_mem ? M0_BRESP : M_IO_BRESP[b_io_idx*2 +: 2];
+    assign M0_BREADY = S_BREADY && !b_empty && b_is_mem;
+    
+    generate
+        for (i = 0; i < 8; i = i + 1) begin : io_b_map
+            assign M_IO_BREADY[i] = S_BREADY && !b_empty && !b_is_mem && (b_io_idx == i);
+        end
+    endgenerate
+
+    wire [3:0] r_target = rd_target_ram[r_ptr[1:0]];
     wire r_is_mem       = (r_target == 4'd0);
     wire [2:0] r_io_idx = r_target[2:0];
 
-    assign S_RVALID = r_fifo_empty ? 1'b0 : (r_is_mem ? M0_RVALID : M_IO_RVALID[r_io_idx]);
-    assign S_RID    = r_is_mem ? M0_RID   : M_IO_RID  [r_io_idx*ID_WIDTH +: ID_WIDTH];
-    assign S_RDATA  = r_is_mem ? M0_RDATA : M_IO_RDATA[r_io_idx*DATA_WIDTH +: DATA_WIDTH];
-    assign S_RRESP  = r_is_mem ? M0_RRESP : M_IO_RRESP[r_io_idx*2 +: 2];
-    assign S_RLAST  = r_is_mem ? M0_RLAST : M_IO_RLAST[r_io_idx];
-
-    assign M0_RREADY = S_RREADY && !r_fifo_empty && r_is_mem;
+    assign S_RVALID  = r_empty ? 1'b0 : (r_is_mem ? M0_RVALID : M_IO_RVALID[r_io_idx]);
+    assign S_RID     = r_is_mem ? M0_RID   : M_IO_RID  [r_io_idx*ID_WIDTH +: ID_WIDTH];
+    assign S_RDATA   = r_is_mem ? M0_RDATA : M_IO_RDATA[r_io_idx*DATA_WIDTH +: DATA_WIDTH];
+    assign S_RRESP   = r_is_mem ? M0_RRESP : M_IO_RRESP[r_io_idx*2 +: 2];
+    assign S_RLAST   = r_is_mem ? M0_RLAST : M_IO_RLAST[r_io_idx];
+    assign M0_RREADY = S_RREADY && !r_empty && r_is_mem;
     
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_r_map
-            assign M_IO_RREADY[i] = S_RREADY && !r_fifo_empty && !r_is_mem && (r_io_idx == i);
+            assign M_IO_RREADY[i] = S_RREADY && !r_empty && !r_is_mem && (r_io_idx == i);
         end
     endgenerate
 
