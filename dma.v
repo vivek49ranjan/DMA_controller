@@ -58,7 +58,7 @@ module dmac_controller #(
     reg  fetch_desc_update;
     reg  [31:0] fetch_desc_next_ptr;
 
-    reg [31:0] reg_ctrl, reg_curr_desc_ptr, reg_irq_clear;     
+    reg [31:0] reg_ctrl, reg_curr_desc_ptr, reg_irq_clear;      
     reg global_error;
     
     reg running;
@@ -120,7 +120,7 @@ module dmac_controller #(
                 reg_curr_desc_ptr <= fetch_desc_next_ptr;
             end
 
-            if (status_retire && is_batch_end) begin
+            if (status_retire && is_batch_end) begin                
                 if (!reg_irq_clear[0]) begin
                     intr_pending_count <= intr_pending_count + 1'b1;
                     cpu_intr           <= 1'b1;
@@ -129,7 +129,6 @@ module dmac_controller #(
         end
     end
 
-   
     localparam F_IDLE = 2'd0, F_REQ = 2'd1, F_WAIT = 2'd2;
     reg [1:0] f_state;
     reg [2:0] word_count;
@@ -142,16 +141,56 @@ module dmac_controller #(
     wire grant_d_rd = (d_state == D_ISSUE_RD) && !grant_u && !grant_f;
     wire grant_d_wr = (d_state == D_ISSUE_WR) && !grant_u && !grant_f;
 
-    wire rx_is_fetch = (read_done_id[Q_DEPTH_BITS] == 1'b1);
+   
+    reg [16:0] rx_cmd_q [0:3]; 
+    reg [1:0]  rx_q_head, rx_q_tail;
+    reg [2:0]  rx_q_count;
+    reg [15:0] rx_beat_cnt;
+
+    wire rx_active   = (rx_q_count > 0);
+    wire rx_is_fetch = rx_active && rx_cmd_q[rx_q_head][16];
+
+    wire read_issued_now = cmd_valid && !cmd_rnw && read_cmd_ready;
+    wire read_beat_acc   = rx_valid && rx_ready;
+    wire read_pkt_done   = read_beat_acc && (rx_beat_cnt == rx_cmd_q[rx_q_head][15:0] - 1'b1);
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            f_state <= F_IDLE;
-            alloc_ptr <= 2'd0;
-            word_count <= 3'd0;
-            valid_slots <= 4'd0;
-            fetch_desc_update <= 1'b0;
-            fetch_desc_next_ptr <= 32'd0;
+            rx_q_head   <= 2'd0;
+            rx_q_tail   <= 2'd0;
+            rx_q_count  <= 3'd0;
+            rx_beat_cnt <= 16'd0;
+        end else begin
+            if (read_issued_now) begin
+                rx_cmd_q[rx_q_tail] <= {(f_state == F_REQ), cmd_len};
+                rx_q_tail           <= rx_q_tail + 1'b1;
+            end
+
+            if (read_beat_acc) begin
+                if (rx_beat_cnt == rx_cmd_q[rx_q_head][15:0] - 1'b1) begin
+                    rx_beat_cnt <= 16'd0;
+                    rx_q_head   <= rx_q_head + 1'b1;
+                end else begin
+                    rx_beat_cnt <= rx_beat_cnt + 1'b1;
+                end
+            end
+
+            if (read_issued_now && !read_pkt_done)
+                rx_q_count <= rx_q_count + 1'b1;
+            else if (!read_issued_now && read_pkt_done)
+                rx_q_count <= rx_q_count - 1'b1;
+        end
+    end
+
+
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin
+            f_state              <= F_IDLE;
+            alloc_ptr            <= 2'd0;
+            word_count           <= 3'd0;
+            valid_slots          <= 4'd0;
+            fetch_desc_update    <= 1'b0;
+            fetch_desc_next_ptr  <= 32'd0;
             end_of_chain_fetched <= 1'b0;
         end else begin
             fetch_desc_update <= 1'b0;
@@ -166,7 +205,7 @@ module dmac_controller #(
                 end
                 F_REQ: begin
                     if (grant_f && read_cmd_ready) begin
-                        f_state <= F_WAIT;
+                        f_state    <= F_WAIT;
                         word_count <= 3'd0;
                     end
                 end
@@ -176,14 +215,14 @@ module dmac_controller #(
                         word_count <= word_count + 1'b1;
                         if (word_count == 3'd7) begin 
                             valid_slots[alloc_ptr] <= 1'b1;
-                            fetch_desc_update <= 1'b1;
-                            fetch_desc_next_ptr <= desc_queue[alloc_ptr][0];
+                            fetch_desc_update      <= 1'b1;
+                            fetch_desc_next_ptr    <= desc_queue[alloc_ptr][0];
                             
                             if (desc_queue[alloc_ptr][0] == 32'd0)
                                 end_of_chain_fetched <= 1'b1;
                                 
                             alloc_ptr <= alloc_ptr + 1'b1;
-                            f_state <= F_IDLE;
+                            f_state   <= F_IDLE;
                         end
                     end
                 end
@@ -198,8 +237,8 @@ module dmac_controller #(
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            d_state <= D_IDLE;
-            disp_ptr <= 2'd0;
+            d_state     <= D_IDLE;
+            disp_ptr    <= 2'd0;
             read_issued <= 4'd0;
         end else begin
             case (d_state)
@@ -211,13 +250,13 @@ module dmac_controller #(
                 D_ISSUE_RD: begin
                     if (grant_d_rd && read_cmd_ready) begin
                         read_issued[disp_ptr] <= 1'b1;
-                        d_state <= D_ISSUE_WR;
+                        d_state               <= D_ISSUE_WR;
                     end
                 end
                 D_ISSUE_WR: begin
                     if (grant_d_wr && write_cmd_ready) begin
                         disp_ptr <= disp_ptr + 1'b1;
-                        d_state <= D_IDLE;
+                        d_state  <= D_IDLE;
                     end
                 end
                 default: d_state <= D_IDLE;
@@ -231,11 +270,11 @@ module dmac_controller #(
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            u_state <= U_IDLE;
-            commit_ptr <= 2'd0;
-            read_completed <= 4'd0;
+            u_state         <= U_IDLE;
+            commit_ptr      <= 2'd0;
+            read_completed  <= 4'd0;
             write_completed <= 4'd0;
-            desc_count <= 3'd0;
+            desc_count      <= 3'd0;
         end else begin
             if (read_cmd_done && read_done_id[Q_DEPTH_BITS] == 1'b0)  
                 read_completed[read_done_id[Q_DEPTH_BITS-1:0]] <= 1'b1;
@@ -256,7 +295,7 @@ module dmac_controller #(
                 end
                 U_WAIT: begin
                     if (status_retire) begin
-                        commit_ptr <= commit_ptr + 1'b1;
+                        commit_ptr                  <= commit_ptr + 1'b1;
                         read_completed[commit_ptr]  <= 1'b0;
                         write_completed[commit_ptr] <= 1'b0;
                         
@@ -274,7 +313,7 @@ module dmac_controller #(
         end
     end
 
-   always @(*) begin
+    always @(*) begin
         cmd_valid = 1'b0;
         cmd_rnw   = 1'b0;
         cmd_addr  = 32'd0;
@@ -320,20 +359,20 @@ module dmac_controller #(
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            tx_q_head <= 2'd0;
-            tx_q_tail <= 2'd0;
-            tx_q_count <= 3'd0;
+            tx_q_head   <= 2'd0;
+            tx_q_tail   <= 2'd0;
+            tx_q_count  <= 3'd0;
             tx_beat_cnt <= 16'd0;
         end else begin
             if (cmd_valid && cmd_rnw && write_cmd_ready) begin
                 tx_cmd_q[tx_q_tail] <= {(u_state == U_REQ), cmd_len};
-                tx_q_tail <= tx_q_tail + 1'b1;
+                tx_q_tail           <= tx_q_tail + 1'b1;
             end
 
             if (tx_valid && tx_ready) begin
                 if (tx_beat_cnt == tx_cmd_q[tx_q_head][15:0] - 1'b1) begin
                     tx_beat_cnt <= 16'd0;
-                    tx_q_head <= tx_q_head + 1'b1;
+                    tx_q_head   <= tx_q_head + 1'b1;
                 end else begin
                     tx_beat_cnt <= tx_beat_cnt + 1'b1;
                 end
@@ -349,7 +388,6 @@ module dmac_controller #(
     wire tx_active    = (tx_q_count > 0);
     wire tx_is_status = tx_cmd_q[tx_q_head][16];
 
-   
     always @(*) begin
         rx_ready   = (rx_is_fetch) ? (f_state == F_WAIT) : !fifo_full;
         fifo_wr_en = (rx_valid && !rx_is_fetch && !fifo_full);
