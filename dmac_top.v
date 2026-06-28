@@ -17,7 +17,10 @@ module dmac_top #(
     output wire                   s_axi_bvalid,
     input  wire                   s_axi_bready,
     
-    output wire                   cpu_intr
+    output wire                   cpu_intr,
+
+    output wire [7:0]             snoop_io_wvalid,
+    output wire [(8*DATA_WIDTH)-1:0] snoop_io_wdata
 );
 
     wire [ID_WIDTH-1:0]       m_awid, m_wid, m_arid, m_bid, m_rid;
@@ -43,6 +46,9 @@ module dmac_top #(
     wire [(8*2)-1:0]          mio_bresp, mio_rresp;
     wire [(8*DATA_WIDTH)-1:0] mio_rdata;
 
+    assign snoop_io_wvalid = mio_wvalid & mio_wready; 
+    assign snoop_io_wdata  = {8{m_wdata}};            
+
     wire [ADDR_WIDTH-1:0]     cmd_addr;
     wire [15:0]               cmd_len;
     wire [2:0]                cmd_size;
@@ -59,7 +65,6 @@ module dmac_top #(
     wire reset_high = ~resetn; 
     wire [2:0] m_cmd_id, m_read_done_id, m_write_done_id;
 
- 
     dmac_controller #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH)
     ) dma_ctrl_inst (
@@ -72,8 +77,8 @@ module dmac_top #(
         .write_cmd_done(write_cmd_done), 
         .write_done_id(m_write_done_id),   
         .cmd_error(cmd_error),
-        .tx_data(tx_data),               .tx_valid(tx_valid),      .tx_ready(tx_ready),
-        .rx_data(rx_data),               .rx_valid(rx_valid),      .rx_ready(rx_ready),
+        .tx_data(tx_data),               .tx_valid(tx_valid),       .tx_ready(tx_ready),
+        .rx_data(rx_data),               .rx_valid(rx_valid),       .rx_ready(rx_ready),
         .cpu_intr(cpu_intr),             .reg_wr_en(reg_wr_en),    .reg_wr_addr(reg_wr_addr),
         .reg_wdata(reg_wdata),           .fifo_wr_en(fifo_wr_en),  .fifo_wdata(fifo_wdata),
         .fifo_full(fifo_full),           .fifo_rd_en(fifo_rd_en),  .fifo_rdata(fifo_rdata),
@@ -90,7 +95,6 @@ module dmac_top #(
         .full(fifo_full),          .empty(fifo_empty)
     );
 
-    
     axi_master #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH)
     ) axi_master_inst (
@@ -101,8 +105,8 @@ module dmac_top #(
         .read_cmd_done(read_cmd_done),   .write_cmd_done(write_cmd_done),
         .read_done_id(m_read_done_id), .write_done_id(m_write_done_id), .cmd_id(m_cmd_id),
         .cmd_error(cmd_error),
-        .tx_data(tx_data),         .tx_valid(tx_valid),      .tx_ready(tx_ready),
-        .rx_data(rx_data),         .rx_valid(rx_valid),      .rx_ready(rx_ready),
+        .tx_data(tx_data),         .tx_valid(tx_valid),       .tx_ready(tx_ready),
+        .rx_data(rx_data),         .rx_valid(rx_valid),       .rx_ready(rx_ready),
         
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .AWVALID(m_awvalid), .AWREADY(m_awready),
@@ -139,7 +143,6 @@ module dmac_top #(
         .M_IO_RID(mio_rid),         .M_IO_RDATA(mio_rdata),     .M_IO_RRESP(mio_rresp),   .M_IO_RLAST(mio_rlast), .M_IO_RVALID(mio_rvalid), .M_IO_RREADY(mio_rready)
     );
 
-  
     wire                      mem_wr_en, mem_rd_en;
     wire [ADDR_WIDTH-1:0]     mem_wr_ad, mem_rd_ad;
     wire [DATA_WIDTH-1:0]     mem_wdata, mem_rdata;
@@ -172,7 +175,6 @@ module dmac_top #(
         .rd_en(mem_rd_en), .rd_addr(mem_rd_ad), .rdata(mem_rdata)
     );
 
-    
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
         .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_0.hex"), .BASE_ADDR(32'h4000_0000)
@@ -181,7 +183,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[0]), .AWREADY(mio_awready[0]),
         .WVALID(mio_wvalid[0]),   .WREADY(mio_wready[0]),
         .BID(mio_bid[0*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[0*2 +: 2]), .BVALID(mio_bvalid[0]), .BREADY(mio_bready[0]),
@@ -198,7 +199,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[1]), .AWREADY(mio_awready[1]),
         .WVALID(mio_wvalid[1]),   .WREADY(mio_wready[1]),
         .BID(mio_bid[1*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[1*2 +: 2]), .BVALID(mio_bvalid[1]), .BREADY(mio_bready[1]),
@@ -215,7 +215,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[2]), .AWREADY(mio_awready[2]),
         .WVALID(mio_wvalid[2]),   .WREADY(mio_wready[2]),
         .BID(mio_bid[2*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[2*2 +: 2]), .BVALID(mio_bvalid[2]), .BREADY(mio_bready[2]),
@@ -232,7 +231,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[3]), .AWREADY(mio_awready[3]),
         .WVALID(mio_wvalid[3]),   .WREADY(mio_wready[3]),
         .BID(mio_bid[3*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[3*2 +: 2]), .BVALID(mio_bvalid[3]), .BREADY(mio_bready[3]),
@@ -249,7 +247,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[4]), .AWREADY(mio_awready[4]),
         .WVALID(mio_wvalid[4]),   .WREADY(mio_wready[4]),
         .BID(mio_bid[4*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[4*2 +: 2]), .BVALID(mio_bvalid[4]), .BREADY(mio_bready[4]),
@@ -266,7 +263,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[5]), .AWREADY(mio_awready[5]),
         .WVALID(mio_wvalid[5]),   .WREADY(mio_wready[5]),
         .BID(mio_bid[5*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[5*2 +: 2]), .BVALID(mio_bvalid[5]), .BREADY(mio_bready[5]),
@@ -283,7 +279,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[6]), .AWREADY(mio_awready[6]),
         .WVALID(mio_wvalid[6]),   .WREADY(mio_wready[6]),
         .BID(mio_bid[6*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[6*2 +: 2]), .BVALID(mio_bvalid[6]), .BREADY(mio_bready[6]),
@@ -300,7 +295,6 @@ module dmac_top #(
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        
         .AWVALID(mio_awvalid[7]), .AWREADY(mio_awready[7]),
         .WVALID(mio_wvalid[7]),   .WREADY(mio_wready[7]),
         .BID(mio_bid[7*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[7*2 +: 2]), .BVALID(mio_bvalid[7]), .BREADY(mio_bready[7]),
@@ -309,7 +303,6 @@ module dmac_top #(
         .RRESP(mio_rresp[7*2 +: 2]), .RLAST(mio_rlast[7]), .RVALID(mio_rvalid[7]), .RREADY(mio_rready[7])
     );
 
-   
     axi_lite_slave #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(DATA_WIDTH)
