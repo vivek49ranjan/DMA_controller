@@ -1,4 +1,4 @@
-module ram #(
+ ram #(
     parameter DEPTH = 8192,
     parameter DATA_WIDTH = 32,
     parameter ADDR_WIDTH = 32,
@@ -16,12 +16,10 @@ module ram #(
 
     reg [DATA_WIDTH-1:0] mem [0:DEPTH-1];
 
-    // Load initial data
     initial begin
         $readmemh(MEM_FILE, mem);
     end
 
-    // Use dynamic shifting instead of hardcoded [11:2]
     assign rdata = mem[rd_addr >> 2];
 
     always @(posedge clk) begin
