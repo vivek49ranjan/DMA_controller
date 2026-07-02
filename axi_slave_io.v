@@ -2,7 +2,7 @@ module axi_io_slave #(
     parameter DATA_WIDTH = 32,
     parameter ADDR_WIDTH = 32,
     parameter ID_WIDTH   = 4,
-    parameter ROM_DEPTH  = 1024,
+    parameter ROM_DEPTH  = 8192,
     parameter INIT_FILE  = "default_io.mem",
     parameter BASE_ADDR  = 32'h4000_0000 
 )(
@@ -11,15 +11,14 @@ module axi_io_slave #(
 
     input  wire [ID_WIDTH-1:0]      AWID,
     input  wire [ADDR_WIDTH-1:0]    AWADDR,
-    input  wire [3:0]               AWLEN,
+    input  wire [7:0]               AWLEN,   
     input  wire [2:0]               AWSIZE,
     input  wire [1:0]               AWBURST,
     input  wire                     AWVALID,
     output wire                     AWREADY,
 
-    input  wire [ID_WIDTH-1:0]      WID,
     input  wire [DATA_WIDTH-1:0]    WDATA,
-    input  wire [(DATA_WIDTH/8)-1:0] WSTRB,
+    input  wire [(DATA_WIDTH/8)-1:0]WSTRB,
     input  wire                     WLAST,
     input  wire                     WVALID,
     output wire                     WREADY,
@@ -31,31 +30,29 @@ module axi_io_slave #(
 
     input  wire [ID_WIDTH-1:0]      ARID,
     input  wire [ADDR_WIDTH-1:0]    ARADDR,
-    input  wire [3:0]               ARLEN,
+    input  wire [7:0]               ARLEN,   
     input  wire [2:0]               ARSIZE,
     input  wire [1:0]               ARBURST,
     input  wire                     ARVALID,
     output wire                     ARREADY,
 
     output reg  [ID_WIDTH-1:0]      RID,
-    output reg  [DATA_WIDTH-1:0]    RDATA,
+    output wire [DATA_WIDTH-1:0]    RDATA, 
     output reg  [1:0]               RRESP,
     output reg                      RLAST,
     output reg                      RVALID,
     input  wire                     RREADY
 );
 
-  
     reg [DATA_WIDTH-1:0] internal_rom [0:ROM_DEPTH-1];
     
     initial begin
         $readmemh(INIT_FILE, internal_rom);
     end
 
-    
     reg [ID_WIDTH-1:0]   ar_id_queue    [0:3];
     reg [ADDR_WIDTH-1:0] ar_addr_queue  [0:3];
-    reg [3:0]            ar_len_queue   [0:3];
+    reg [7:0]            ar_len_queue   [0:3]; 
     reg [2:0]            ar_size_queue  [0:3];
     reg [1:0]            ar_burst_queue [0:3];
     
@@ -91,21 +88,20 @@ module axi_io_slave #(
         end
     end
 
-  
-    reg [3:0]  r_beat_count;
+    reg [7:0]  r_beat_count; 
     reg        rvalid_reg;
     reg [31:0] rom_read_ptr;
     reg [ADDR_WIDTH-1:0] r_current_addr;
 
     wire handshaking = (RVALID && RREADY);
     
-   
-    wire [ADDR_WIDTH-1:0] r_align_mask = ~((32'd1 << ar_size_queue[ar_head]) - 1);
     wire r_is_unsupported = (ar_burst_queue[ar_head] != 2'b01);
-	 
+    
     wire [31:0] next_rom_ptr = (handshaking && !r_is_unsupported) ? 
                                ((rom_read_ptr == ROM_DEPTH - 1) ? 32'd0 : rom_read_ptr + 1'b1) : 
                                rom_read_ptr;
+
+    assign RDATA = internal_rom[rom_read_ptr]; 
 
     always @(*) begin
         RVALID = rvalid_reg;
@@ -122,13 +118,9 @@ module axi_io_slave #(
         end
     end
 
-    always @(posedge ACLK) begin
-        RDATA <= internal_rom[next_rom_ptr];
-    end
-
     always @(posedge ACLK or negedge ARESETN) begin
         if (!ARESETN) begin
-            r_beat_count <= 4'd0;
+            r_beat_count <= 8'd0;
             rvalid_reg   <= 1'b0;
             r_current_addr <= {ADDR_WIDTH{1'b0}};
         end else begin
@@ -138,11 +130,11 @@ module axi_io_slave #(
                 end else if (handshaking) begin
                     if (RLAST) begin
                         rvalid_reg   <= (ar_count > 1);
-                        r_beat_count <= 4'd0;
+                        r_beat_count <= 8'd0;
                     end else begin
                         r_beat_count <= r_beat_count + 1'b1;
                         if (r_beat_count == 0)
-                            r_current_addr <= (ar_addr_queue[ar_head] & r_align_mask) + (1 << ar_size_queue[ar_head]);
+                            r_current_addr <= ar_addr_queue[ar_head] + (1 << ar_size_queue[ar_head]);
                         else
                             r_current_addr <= r_current_addr + (1 << ar_size_queue[ar_head]);
                     end
@@ -153,7 +145,6 @@ module axi_io_slave #(
         end
     end
 
-    
     reg [ID_WIDTH-1:0]   aw_id_queue    [0:3];
     reg [ADDR_WIDTH-1:0] aw_addr_queue  [0:3];
     reg [2:0]            aw_size_queue  [0:3];
@@ -192,7 +183,6 @@ module axi_io_slave #(
     reg w_first_beat;
     reg [ADDR_WIDTH-1:0] w_current_addr;
 
-    wire [ADDR_WIDTH-1:0] w_align_mask = ~((32'd1 << aw_size_queue[aw_head]) - 1);
     wire w_is_unsupported = (aw_burst_queue[aw_head] != 2'b01);
 
     assign WREADY = (aw_count > 0) && !BVALID;
@@ -209,7 +199,7 @@ module axi_io_slave #(
                 w_first_beat <= WLAST;
                 
                 if (w_first_beat)
-                    w_current_addr <= (aw_addr_queue[aw_head] & w_align_mask) + (1 << aw_size_queue[aw_head]);
+                    w_current_addr <= aw_addr_queue[aw_head] + (1 << aw_size_queue[aw_head]);
                 else
                     w_current_addr <= w_current_addr + (1 << aw_size_queue[aw_head]);
 
