@@ -3,29 +3,29 @@ module dmac_top #(
     parameter DATA_WIDTH = 32,
     parameter ID_WIDTH   = 4
 )(
-    input  wire                   clk,
-    input  wire                   resetn,
+    input  wire                     clk,
+    input  wire                     resetn,
     
-    input  wire [ADDR_WIDTH-1:0]  s_axi_awaddr,
-    input  wire                   s_axi_awvalid,
-    output wire                   s_axi_awready,
-    input  wire [DATA_WIDTH-1:0]  s_axi_wdata,
+    input  wire [ADDR_WIDTH-1:0]    s_axi_awaddr,
+    input  wire                     s_axi_awvalid,
+    output wire                     s_axi_awready,
+    input  wire [DATA_WIDTH-1:0]    s_axi_wdata,
     input  wire [(DATA_WIDTH/8)-1:0] s_axi_wstrb,
-    input  wire                   s_axi_wvalid,
-    output wire                   s_axi_wready,
-    output wire [1:0]             s_axi_bresp,
-    output wire                   s_axi_bvalid,
-    input  wire                   s_axi_bready,
+    input  wire                     s_axi_wvalid,
+    output wire                     s_axi_wready,
+    output wire [1:0]               s_axi_bresp,
+    output wire                     s_axi_bvalid,
+    input  wire                     s_axi_bready,
     
-    output wire                   cpu_intr,
+    output wire                     cpu_intr,
 
-    output wire [7:0]             snoop_io_wvalid,
+    output wire [7:0]               snoop_io_wvalid,
     output wire [(8*DATA_WIDTH)-1:0] snoop_io_wdata
 );
 
-    wire [ID_WIDTH-1:0]       m_awid, m_wid, m_arid, m_bid, m_rid;
+    wire [ID_WIDTH-1:0]       m_awid, m_arid, m_bid, m_rid;
     wire [ADDR_WIDTH-1:0]     m_awaddr, m_araddr;
-    wire [3:0]                m_awlen, m_arlen;
+    wire [7:0]                m_awlen, m_arlen; 
     wire [2:0]                m_awsize, m_arsize;
     wire [1:0]                m_awburst, m_arburst;
     wire [(DATA_WIDTH/8)-1:0] m_wstrb;
@@ -34,19 +34,19 @@ module dmac_top #(
     wire                      m_bvalid, m_bready, m_arvalid, m_arready, m_rvalid, m_rready, m_rlast;
     wire [1:0]                m_bresp, m_rresp;
 
-    wire                      m0_awvalid, m0_awready, m0_wvalid, m0_wready;
-    wire                      m0_bvalid, m0_bready, m0_arvalid, m0_arready, m0_rvalid, m0_rready, m0_rlast;
-    wire [ID_WIDTH-1:0]       m0_bid, m0_rid;
-    wire [1:0]                m0_bresp, m0_rresp;
-    wire [DATA_WIDTH-1:0]     m0_rdata;
+    wire                      mem_awvalid, mem_awready, mem_wvalid, mem_wready;
+    wire                      mem_bvalid, mem_bready, mem_arvalid, mem_arready, mem_rvalid, mem_rready, mem_rlast;
+    wire [ID_WIDTH-1:0]       mem_bid, mem_rid;
+    wire [1:0]                mem_bresp, mem_rresp;
+    wire [DATA_WIDTH-1:0]     mem_rdata;
 
-    wire [7:0]                mio_awvalid, mio_awready, mio_wvalid, mio_wready;
-    wire [7:0]                mio_bvalid, mio_bready, mio_arvalid, mio_arready, mio_rvalid, mio_rready, mio_rlast;
-    wire [(8*ID_WIDTH)-1:0]   mio_bid, mio_rid;
-    wire [(8*2)-1:0]          mio_bresp, mio_rresp;
-    wire [(8*DATA_WIDTH)-1:0] mio_rdata;
+    wire [7:0]                io_awvalid, io_awready, io_wvalid, io_wready;
+    wire [7:0]                io_bvalid, io_bready, io_arvalid, io_arready, io_rvalid, io_rready, io_rlast;
+    wire [(8*ID_WIDTH)-1:0]   io_bid, io_rid;
+    wire [(8*2)-1:0]          io_bresp, io_rresp;
+    wire [(8*DATA_WIDTH)-1:0] io_rdata;
 
-    assign snoop_io_wvalid = mio_wvalid & mio_wready; 
+    assign snoop_io_wvalid = io_wvalid & io_wready; 
     assign snoop_io_wdata  = {8{m_wdata}};            
 
     wire [ADDR_WIDTH-1:0]     cmd_addr;
@@ -100,7 +100,7 @@ module dmac_top #(
     ) axi_master_inst (
         .ACLK(clk),                .ARESETn(resetn),
         .cmd_addr(cmd_addr),       .cmd_len(cmd_len),
-        .cmd_size(cmd_size),       .cmd_rnw(cmd_rnw),         .cmd_valid(cmd_valid),
+        .cmd_size(cmd_size),       .cmd_rnw(cmd_rnw),          .cmd_valid(cmd_valid),
         .read_cmd_ready(read_cmd_ready), .write_cmd_ready(write_cmd_ready),
         .read_cmd_done(read_cmd_done),   .write_cmd_done(write_cmd_done),
         .read_done_id(m_read_done_id), .write_done_id(m_write_done_id), .cmd_id(m_cmd_id),
@@ -110,7 +110,8 @@ module dmac_top #(
         
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
         .AWVALID(m_awvalid), .AWREADY(m_awready),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .WVALID(m_wvalid), .WREADY(m_wready),
         .BID(m_bid), .BRESP(m_bresp), .BVALID(m_bvalid), .BREADY(m_bready),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
@@ -124,183 +125,183 @@ module dmac_top #(
     ) router_inst (
         .ACLK(clk), .ARESETn(resetn),
         
-        .S_AWADDR(m_awaddr), .S_AWVALID(m_awvalid), .S_AWREADY(m_awready),
-        .S_WLAST(m_wlast),   .S_WVALID(m_wvalid),   .S_WREADY(m_wready),
-        .S_BID(m_bid),       .S_BRESP(m_bresp),     .S_BVALID(m_bvalid),   .S_BREADY(m_bready),
-        .S_ARADDR(m_araddr), .S_ARVALID(m_arvalid), .S_ARREADY(m_arready),
-        .S_RID(m_rid),       .S_RDATA(m_rdata),     .S_RRESP(m_rresp),     .S_RLAST(m_rlast), .S_RVALID(m_rvalid), .S_RREADY(m_rready),
+        .M_AWADDR(m_awaddr), .M_AWVALID(m_awvalid), .M_AWREADY(m_awready),
+        .M_WLAST(m_wlast),   .M_WVALID(m_wvalid),   .M_WREADY(m_wready),
+        .M_BID(m_bid),       .M_BRESP(m_bresp),     .M_BVALID(m_bvalid),   .M_BREADY(m_bready),
+        .M_ARADDR(m_araddr), .M_ARVALID(m_arvalid), .M_ARREADY(m_arready),
+        .M_RID(m_rid),       .M_RDATA(m_rdata),     .M_RRESP(m_rresp),     .M_RLAST(m_rlast), .M_RVALID(m_rvalid), .M_RREADY(m_rready),
         
-        .M0_AWVALID(m0_awvalid), .M0_AWREADY(m0_awready),
-        .M0_WVALID(m0_wvalid),   .M0_WREADY(m0_wready),
-        .M0_BID(m0_bid),         .M0_BRESP(m0_bresp),       .M0_BVALID(m0_bvalid), .M0_BREADY(m0_bready),
-        .M0_ARVALID(m0_arvalid), .M0_ARREADY(m0_arready),
-        .M0_RID(m0_rid),         .M0_RDATA(m0_rdata),       .M0_RRESP(m0_rresp),   .M0_RLAST(m0_rlast), .M0_RVALID(m0_rvalid), .M0_RREADY(m0_rready),
+        .MEM_AWVALID(mem_awvalid), .MEM_AWREADY(mem_awready),
+        .MEM_WVALID(mem_wvalid),   .MEM_WREADY(mem_wready),
+        .MEM_BID(mem_bid),         .MEM_BRESP(mem_bresp),       .MEM_BVALID(mem_bvalid), .MEM_BREADY(mem_bready),
+        .MEM_ARVALID(mem_arvalid), .MEM_ARREADY(mem_arready),
+        .MEM_RID(mem_rid),         .MEM_RDATA(mem_rdata),       .MEM_RRESP(mem_rresp),   .MEM_RLAST(mem_rlast), .MEM_RVALID(mem_rvalid), .MEM_RREADY(mem_rready),
 
-        .M_IO_AWVALID(mio_awvalid), .M_IO_AWREADY(mio_awready),
-        .M_IO_WVALID(mio_wvalid),   .M_IO_WREADY(mio_wready),
-        .M_IO_BID(mio_bid),         .M_IO_BRESP(mio_bresp),     .M_IO_BVALID(mio_bvalid), .M_IO_BREADY(mio_bready),
-        .M_IO_ARVALID(mio_arvalid), .M_IO_ARREADY(mio_arready),
-        .M_IO_RID(mio_rid),         .M_IO_RDATA(mio_rdata),     .M_IO_RRESP(mio_rresp),   .M_IO_RLAST(mio_rlast), .M_IO_RVALID(mio_rvalid), .M_IO_RREADY(mio_rready)
+        .IO_AWVALID(io_awvalid), .IO_AWREADY(io_awready),
+        .IO_WVALID(io_wvalid),   .IO_WREADY(io_wready),
+        .IO_BID(io_bid),         .IO_BRESP(io_bresp),       .IO_BVALID(io_bvalid), .IO_BREADY(io_bready),
+        .IO_ARVALID(io_arvalid), .IO_ARREADY(io_arready),
+        .IO_RID(io_rid),         .IO_RDATA(io_rdata),       .IO_RRESP(io_rresp),   .IO_RLAST(io_rlast), .IO_RVALID(io_rvalid), .IO_RREADY(io_rready)
     );
 
-    wire                      mem_wr_en, mem_rd_en;
-    wire [ADDR_WIDTH-1:0]     mem_wr_ad, mem_rd_ad;
-    wire [DATA_WIDTH-1:0]     mem_wdata, mem_rdata;
-    wire [(DATA_WIDTH/8)-1:0] mem_wstrb;
+    wire                      ram_wr_en, ram_rd_en;
+    wire [ADDR_WIDTH-1:0]     ram_wr_ad, ram_rd_ad;
+    wire [DATA_WIDTH-1:0]     ram_wdata, ram_rdata;
+    wire [(DATA_WIDTH/8)-1:0] ram_wstrb;
 
     axi_slave_memory #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH)
     ) main_memory_inst (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid),   .WDATA(m_wdata),   .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata),   .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
         
-        .AWVALID(m0_awvalid), .AWREADY(m0_awready),
-        .WVALID(m0_wvalid),   .WREADY(m0_wready),
-        .BID(m0_bid),         .BRESP(m0_bresp),   .BVALID(m0_bvalid), .BREADY(m0_bready),
-        .ARVALID(m0_arvalid), .ARREADY(m0_arready),
-        .RID(m0_rid),         .RDATA(m0_rdata),   .RRESP(m0_rresp),   .RLAST(m0_rlast), .RVALID(m0_rvalid), .RREADY(m0_rready),
+        .AWVALID(mem_awvalid), .AWREADY(mem_awready),
+        .WVALID(mem_wvalid),   .WREADY(mem_wready),
+        .BID(mem_bid),         .BRESP(mem_bresp),   .BVALID(mem_bvalid), .BREADY(mem_bready),
+        .ARVALID(mem_arvalid), .ARREADY(mem_arready),
+        .RID(mem_rid),         .RDATA(mem_rdata),   .RRESP(mem_rresp),   .RLAST(mem_rlast), .RVALID(mem_rvalid), .RREADY(mem_rready),
         
-        .MEMORY_WR_EN(mem_wr_en), .MEMORY_WR_AD(mem_wr_ad), .MEMORY_WDATA(mem_wdata), .MEMORY_WSTRB(mem_wstrb),
-        .MEMORY_RD_EN(mem_rd_en), .MEMORY_RD_AD(mem_rd_ad), .MEMORY_RDATA(mem_rdata),
+        .MEMORY_WR_EN(ram_wr_en), .MEMORY_WR_AD(ram_wr_ad), .MEMORY_WDATA(ram_wdata), .MEMORY_WSTRB(ram_wstrb),
+        .MEMORY_RD_EN(ram_rd_en), .MEMORY_RD_AD(ram_rd_ad), .MEMORY_RDATA(ram_rdata),
         .MEMORY_WR_BUSY(1'b0),    .MEMORY_RD_BUSY(1'b0) 
     );
 
     ram #(
-        .DEPTH(1024), .DATA_WIDTH(DATA_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)
+        .DEPTH(8192), .DATA_WIDTH(DATA_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)
     ) internal_sram_inst (
         .clk(clk),
-        .wr_en(mem_wr_en), .wr_addr(mem_wr_ad), .wdata(mem_wdata), .wstrb(mem_wstrb),
-        .rd_en(mem_rd_en), .rd_addr(mem_rd_ad), .rdata(mem_rdata)
+        .wr_en(ram_wr_en), .wr_addr(ram_wr_ad), .wdata(ram_wdata), .wstrb(ram_wstrb),
+        .rd_en(ram_rd_en), .rd_addr(ram_rd_ad), .rdata(ram_rdata)
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_0.hex"), .BASE_ADDR(32'h4000_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_0.hex"), .BASE_ADDR(32'h4000_0000)
     ) io_slave_0 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[0]), .AWREADY(mio_awready[0]),
-        .WVALID(mio_wvalid[0]),   .WREADY(mio_wready[0]),
-        .BID(mio_bid[0*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[0*2 +: 2]), .BVALID(mio_bvalid[0]), .BREADY(mio_bready[0]),
-        .ARVALID(mio_arvalid[0]), .ARREADY(mio_arready[0]),
-        .RID(mio_rid[0*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[0*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[0*2 +: 2]), .RLAST(mio_rlast[0]), .RVALID(mio_rvalid[0]), .RREADY(mio_rready[0])
+        .AWVALID(io_awvalid[0]), .AWREADY(io_awready[0]),
+        .WVALID(io_wvalid[0]),   .WREADY(io_wready[0]),
+        .BID(io_bid[0*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[0*2 +: 2]), .BVALID(io_bvalid[0]), .BREADY(io_bready[0]),
+        .ARVALID(io_arvalid[0]), .ARREADY(io_arready[0]),
+        .RID(io_rid[0*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[0*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[0*2 +: 2]), .RLAST(io_rlast[0]), .RVALID(io_rvalid[0]), .RREADY(io_rready[0])
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_1.hex"), .BASE_ADDR(32'h4010_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_1.hex"), .BASE_ADDR(32'h4010_0000)
     ) io_slave_1 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[1]), .AWREADY(mio_awready[1]),
-        .WVALID(mio_wvalid[1]),   .WREADY(mio_wready[1]),
-        .BID(mio_bid[1*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[1*2 +: 2]), .BVALID(mio_bvalid[1]), .BREADY(mio_bready[1]),
-        .ARVALID(mio_arvalid[1]), .ARREADY(mio_arready[1]),
-        .RID(mio_rid[1*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[1*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[1*2 +: 2]), .RLAST(mio_rlast[1]), .RVALID(mio_rvalid[1]), .RREADY(mio_rready[1])
+        .AWVALID(io_awvalid[1]), .AWREADY(io_awready[1]),
+        .WVALID(io_wvalid[1]),   .WREADY(io_wready[1]),
+        .BID(io_bid[1*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[1*2 +: 2]), .BVALID(io_bvalid[1]), .BREADY(io_bready[1]),
+        .ARVALID(io_arvalid[1]), .ARREADY(io_arready[1]),
+        .RID(io_rid[1*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[1*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[1*2 +: 2]), .RLAST(io_rlast[1]), .RVALID(io_rvalid[1]), .RREADY(io_rready[1])
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_2.hex"), .BASE_ADDR(32'h4020_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_2.hex"), .BASE_ADDR(32'h4020_0000)
     ) io_slave_2 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[2]), .AWREADY(mio_awready[2]),
-        .WVALID(mio_wvalid[2]),   .WREADY(mio_wready[2]),
-        .BID(mio_bid[2*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[2*2 +: 2]), .BVALID(mio_bvalid[2]), .BREADY(mio_bready[2]),
-        .ARVALID(mio_arvalid[2]), .ARREADY(mio_arready[2]),
-        .RID(mio_rid[2*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[2*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[2*2 +: 2]), .RLAST(mio_rlast[2]), .RVALID(mio_rvalid[2]), .RREADY(mio_rready[2])
+        .AWVALID(io_awvalid[2]), .AWREADY(io_awready[2]),
+        .WVALID(io_wvalid[2]),   .WREADY(io_wready[2]),
+        .BID(io_bid[2*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[2*2 +: 2]), .BVALID(io_bvalid[2]), .BREADY(io_bready[2]),
+        .ARVALID(io_arvalid[2]), .ARREADY(io_arready[2]),
+        .RID(io_rid[2*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[2*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[2*2 +: 2]), .RLAST(io_rlast[2]), .RVALID(io_rvalid[2]), .RREADY(io_rready[2])
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_3.hex"), .BASE_ADDR(32'h4030_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_3.hex"), .BASE_ADDR(32'h4030_0000)
     ) io_slave_3 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[3]), .AWREADY(mio_awready[3]),
-        .WVALID(mio_wvalid[3]),   .WREADY(mio_wready[3]),
-        .BID(mio_bid[3*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[3*2 +: 2]), .BVALID(mio_bvalid[3]), .BREADY(mio_bready[3]),
-        .ARVALID(mio_arvalid[3]), .ARREADY(mio_arready[3]),
-        .RID(mio_rid[3*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[3*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[3*2 +: 2]), .RLAST(mio_rlast[3]), .RVALID(mio_rvalid[3]), .RREADY(mio_rready[3])
+        .AWVALID(io_awvalid[3]), .AWREADY(io_awready[3]),
+        .WVALID(io_wvalid[3]),   .WREADY(io_wready[3]),
+        .BID(io_bid[3*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[3*2 +: 2]), .BVALID(io_bvalid[3]), .BREADY(io_bready[3]),
+        .ARVALID(io_arvalid[3]), .ARREADY(io_arready[3]),
+        .RID(io_rid[3*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[3*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[3*2 +: 2]), .RLAST(io_rlast[3]), .RVALID(io_rvalid[3]), .RREADY(io_rready[3])
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_4.hex"), .BASE_ADDR(32'h4040_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_4.hex"), .BASE_ADDR(32'h4040_0000)
     ) io_slave_4 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[4]), .AWREADY(mio_awready[4]),
-        .WVALID(mio_wvalid[4]),   .WREADY(mio_wready[4]),
-        .BID(mio_bid[4*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[4*2 +: 2]), .BVALID(mio_bvalid[4]), .BREADY(mio_bready[4]),
-        .ARVALID(mio_arvalid[4]), .ARREADY(mio_arready[4]),
-        .RID(mio_rid[4*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[4*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[4*2 +: 2]), .RLAST(mio_rlast[4]), .RVALID(mio_rvalid[4]), .RREADY(mio_rready[4])
+        .AWVALID(io_awvalid[4]), .AWREADY(io_awready[4]),
+        .WVALID(io_wvalid[4]),   .WREADY(io_wready[4]),
+        .BID(io_bid[4*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[4*2 +: 2]), .BVALID(io_bvalid[4]), .BREADY(io_bready[4]),
+        .ARVALID(io_arvalid[4]), .ARREADY(io_arready[4]),
+        .RID(io_rid[4*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[4*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[4*2 +: 2]), .RLAST(io_rlast[4]), .RVALID(io_rvalid[4]), .RREADY(io_rready[4])
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_5.hex"), .BASE_ADDR(32'h4050_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_5.hex"), .BASE_ADDR(32'h4050_0000)
     ) io_slave_5 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[5]), .AWREADY(mio_awready[5]),
-        .WVALID(mio_wvalid[5]),   .WREADY(mio_wready[5]),
-        .BID(mio_bid[5*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[5*2 +: 2]), .BVALID(mio_bvalid[5]), .BREADY(mio_bready[5]),
-        .ARVALID(mio_arvalid[5]), .ARREADY(mio_arready[5]),
-        .RID(mio_rid[5*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[5*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[5*2 +: 2]), .RLAST(mio_rlast[5]), .RVALID(mio_rvalid[5]), .RREADY(mio_rready[5])
+        .AWVALID(io_awvalid[5]), .AWREADY(io_awready[5]),
+        .WVALID(io_wvalid[5]),   .WREADY(io_wready[5]),
+        .BID(io_bid[5*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[5*2 +: 2]), .BVALID(io_bvalid[5]), .BREADY(io_bready[5]),
+        .ARVALID(io_arvalid[5]), .ARREADY(io_arready[5]),
+        .RID(io_rid[5*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[5*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[5*2 +: 2]), .RLAST(io_rlast[5]), .RVALID(io_rvalid[5]), .RREADY(io_rready[5])
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_6.hex"), .BASE_ADDR(32'h4060_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_6.hex"), .BASE_ADDR(32'h4060_0000)
     ) io_slave_6 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[6]), .AWREADY(mio_awready[6]),
-        .WVALID(mio_wvalid[6]),   .WREADY(mio_wready[6]),
-        .BID(mio_bid[6*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[6*2 +: 2]), .BVALID(mio_bvalid[6]), .BREADY(mio_bready[6]),
-        .ARVALID(mio_arvalid[6]), .ARREADY(mio_arready[6]),
-        .RID(mio_rid[6*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[6*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[6*2 +: 2]), .RLAST(mio_rlast[6]), .RVALID(mio_rvalid[6]), .RREADY(mio_rready[6])
+        .AWVALID(io_awvalid[6]), .AWREADY(io_awready[6]),
+        .WVALID(io_wvalid[6]),   .WREADY(io_wready[6]),
+        .BID(io_bid[6*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[6*2 +: 2]), .BVALID(io_bvalid[6]), .BREADY(io_bready[6]),
+        .ARVALID(io_arvalid[6]), .ARREADY(io_arready[6]),
+        .RID(io_rid[6*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[6*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[6*2 +: 2]), .RLAST(io_rlast[6]), .RVALID(io_rvalid[6]), .RREADY(io_rready[6])
     );
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_7.hex"), .BASE_ADDR(32'h4070_0000)
+        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_7.hex"), .BASE_ADDR(32'h4070_0000)
     ) io_slave_7 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
-        .WID(m_wid), .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
+        .WDATA(m_wdata), .WSTRB(m_wstrb), .WLAST(m_wlast),
         .ARID(m_arid), .ARADDR(m_araddr), .ARLEN(m_arlen), .ARSIZE(m_arsize), .ARBURST(m_arburst),
-        .AWVALID(mio_awvalid[7]), .AWREADY(mio_awready[7]),
-        .WVALID(mio_wvalid[7]),   .WREADY(mio_wready[7]),
-        .BID(mio_bid[7*ID_WIDTH +: ID_WIDTH]), .BRESP(mio_bresp[7*2 +: 2]), .BVALID(mio_bvalid[7]), .BREADY(mio_bready[7]),
-        .ARVALID(mio_arvalid[7]), .ARREADY(mio_arready[7]),
-        .RID(mio_rid[7*ID_WIDTH +: ID_WIDTH]), .RDATA(mio_rdata[7*DATA_WIDTH +: DATA_WIDTH]),
-        .RRESP(mio_rresp[7*2 +: 2]), .RLAST(mio_rlast[7]), .RVALID(mio_rvalid[7]), .RREADY(mio_rready[7])
+        .AWVALID(io_awvalid[7]), .AWREADY(io_awready[7]),
+        .WVALID(io_wvalid[7]),   .WREADY(io_wready[7]),
+        .BID(io_bid[7*ID_WIDTH +: ID_WIDTH]), .BRESP(io_bresp[7*2 +: 2]), .BVALID(io_bvalid[7]), .BREADY(io_bready[7]),
+        .ARVALID(io_arvalid[7]), .ARREADY(io_arready[7]),
+        .RID(io_rid[7*ID_WIDTH +: ID_WIDTH]), .RDATA(io_rdata[7*DATA_WIDTH +: DATA_WIDTH]),
+        .RRESP(io_rresp[7*2 +: 2]), .RLAST(io_rlast[7]), .RVALID(io_rvalid[7]), .RREADY(io_rready[7])
     );
 
     axi_lite_slave #(
