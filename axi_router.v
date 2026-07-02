@@ -6,73 +6,73 @@ module axi_router #(
     input  wire ACLK,
     input  wire ARESETn,
 
-    input  wire [ADDR_WIDTH-1:0] S_AWADDR,
-    input  wire                  S_WLAST,
-    input  wire [ADDR_WIDTH-1:0] S_ARADDR,
+    input  wire [ADDR_WIDTH-1:0] M_AWADDR,
+    input  wire                  M_WLAST,
+    input  wire [ADDR_WIDTH-1:0] M_ARADDR,
 
-    input  wire                  S_AWVALID,
-    output wire                  S_AWREADY,
-    input  wire                  S_WVALID,
-    output wire                  S_WREADY,
-    output wire                  S_BVALID,
-    input  wire                  S_BREADY,
-    input  wire                  S_ARVALID,
-    output wire                  S_ARREADY,
-    output wire                  S_RVALID,
-    input  wire                  S_RREADY,
+    input  wire                  M_AWVALID,
+    output wire                  M_AWREADY,
+    input  wire                  M_WVALID,
+    output wire                  M_WREADY,
+    output wire                  M_BVALID,
+    input  wire                  M_BREADY,
+    input  wire                  M_ARVALID,
+    output wire                  M_ARREADY,
+    output wire                  M_RVALID,
+    input  wire                  M_RREADY,
 
-    output wire [ID_WIDTH-1:0]   S_BID,
-    output wire [1:0]            S_BRESP,
-    output wire [ID_WIDTH-1:0]   S_RID,
-    output wire [DATA_WIDTH-1:0] S_RDATA,
-    output wire [1:0]            S_RRESP,
-    output wire                  S_RLAST,
+    output wire [ID_WIDTH-1:0]   M_BID,
+    output wire [1:0]            M_BRESP,
+    output wire [ID_WIDTH-1:0]   M_RID,
+    output wire [DATA_WIDTH-1:0] M_RDATA,
+    output wire [1:0]            M_RRESP,
+    output wire                  M_RLAST,
 
-    output wire                  M0_AWVALID,
-    input  wire                  M0_AWREADY,
-    output wire                  M0_WVALID,
-    input  wire                  M0_WREADY,
-    input  wire                  M0_BVALID,
-    output wire                  M0_BREADY,
-    input  wire [ID_WIDTH-1:0]   M0_BID,
-    input  wire [1:0]            M0_BRESP,
+    output wire                  MEM_AWVALID,
+    input  wire                  MEM_AWREADY,
+    output wire                  MEM_WVALID,
+    input  wire                  MEM_WREADY,
+    input  wire                  MEM_BVALID,
+    output wire                  MEM_BREADY,
+    input  wire [ID_WIDTH-1:0]   MEM_BID,
+    input  wire [1:0]            MEM_BRESP,
     
-    output wire                  M0_ARVALID,
-    input  wire                  M0_ARREADY,
-    input  wire                  M0_RVALID,
-    output wire                  M0_RREADY,
-    input  wire [ID_WIDTH-1:0]   M0_RID,
-    input  wire [DATA_WIDTH-1:0] M0_RDATA,
-    input  wire [1:0]            M0_RRESP,
-    input  wire                  M0_RLAST,
+    output wire                  MEM_ARVALID,
+    input  wire                  MEM_ARREADY,
+    input  wire                  MEM_RVALID,
+    output wire                  MEM_RREADY,
+    input  wire [ID_WIDTH-1:0]   MEM_RID,
+    input  wire [DATA_WIDTH-1:0] MEM_RDATA,
+    input  wire [1:0]            MEM_RRESP,
+    input  wire                  MEM_RLAST,
 
-    output wire [7:0]                    M_IO_AWVALID,
-    input  wire [7:0]                    M_IO_AWREADY,
-    output wire [7:0]                    M_IO_WVALID,
-    input  wire [7:0]                    M_IO_WREADY,
-    input  wire [7:0]                    M_IO_BVALID,
-    output wire [7:0]                    M_IO_BREADY,
-    input  wire [(8*ID_WIDTH)-1:0]       M_IO_BID,
-    input  wire [(8*2)-1:0]              M_IO_BRESP,
+    output wire [7:0]                    IO_AWVALID,
+    input  wire [7:0]                    IO_AWREADY,
+    output wire [7:0]                    IO_WVALID,
+    input  wire [7:0]                    IO_WREADY,
+    input  wire [7:0]                    IO_BVALID,
+    output wire [7:0]                    IO_BREADY,
+    input  wire [(8*ID_WIDTH)-1:0]       IO_BID,
+    input  wire [(8*2)-1:0]              IO_BRESP,
     
-    output wire [7:0]                    M_IO_ARVALID,
-    input  wire [7:0]                    M_IO_ARREADY,
-    input  wire [7:0]                    M_IO_RVALID,
-    output wire [7:0]                    M_IO_RREADY,
-    input  wire [(8*ID_WIDTH)-1:0]       M_IO_RID,
-    input  wire [(8*DATA_WIDTH)-1:0]     M_IO_RDATA,
-    input  wire [(8*2)-1:0]              M_IO_RRESP,
-    input  wire [7:0]                    M_IO_RLAST
+    output wire [7:0]                    IO_ARVALID,
+    input  wire [7:0]                    IO_ARREADY,
+    input  wire [7:0]                    IO_RVALID,
+    output wire [7:0]                    IO_RREADY,
+    input  wire [(8*ID_WIDTH)-1:0]       IO_RID,
+    input  wire [(8*DATA_WIDTH)-1:0]     IO_RDATA,
+    input  wire [(8*2)-1:0]              IO_RRESP,
+    input  wire [7:0]                    IO_RLAST
 );
 
     
-    wire is_aw_m0  = (S_AWADDR[31:28] == 4'h0);
-    wire is_aw_io  = (S_AWADDR[31:28] == 4'h4);
-    wire [2:0] aw_io_idx = S_AWADDR[22:20];
+    wire is_aw_mem = (M_AWADDR[31:28] == 4'h0);
+    wire is_aw_io  = (M_AWADDR[31:28] == 4'h4);
+    wire [2:0] aw_io_idx = M_AWADDR[22:20];
 
-    wire is_ar_m0  = (S_ARADDR[31:28] == 4'h0);
-    wire is_ar_io  = (S_ARADDR[31:28] == 4'h4);
-    wire [2:0] ar_io_idx = S_ARADDR[22:20];
+    wire is_ar_mem = (M_ARADDR[31:28] == 4'h0);
+    wire is_ar_io  = (M_ARADDR[31:28] == 4'h4);
+    wire [2:0] ar_io_idx = M_ARADDR[22:20];
 
    
     reg [3:0] wr_target_ram [0:3];
@@ -89,24 +89,24 @@ module axi_router #(
     wire r_empty  = (r_ptr == ar_ptr);
 
   
-    assign S_AWREADY  = is_aw_m0 ? (M0_AWREADY && !wr_full) : 
-                        is_aw_io ? (M_IO_AWREADY[aw_io_idx] && !wr_full) : 1'b0;
-    assign M0_AWVALID = S_AWVALID && is_aw_m0 && !wr_full;
+    assign M_AWREADY  = is_aw_mem ? (MEM_AWREADY && !wr_full) : 
+                        is_aw_io ? (IO_AWREADY[aw_io_idx] && !wr_full) : 1'b0;
+    assign MEM_AWVALID = M_AWVALID && is_aw_mem && !wr_full;
 
     genvar i;
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_aw_map
-            assign M_IO_AWVALID[i] = S_AWVALID && is_aw_io && (aw_io_idx == i) && !wr_full;
+            assign IO_AWVALID[i] = M_AWVALID && is_aw_io && (aw_io_idx == i) && !wr_full;
         end
     endgenerate
 
-    assign S_ARREADY  = is_ar_m0 ? (M0_ARREADY && !rd_full) : 
-                        is_ar_io ? (M_IO_ARREADY[ar_io_idx] && !rd_full) : 1'b0;
-    assign M0_ARVALID = S_ARVALID && is_ar_m0 && !rd_full;
+    assign M_ARREADY  = is_ar_mem ? (MEM_ARREADY && !rd_full) : 
+                        is_ar_io ? (IO_ARREADY[ar_io_idx] && !rd_full) : 1'b0;
+    assign MEM_ARVALID = M_ARVALID && is_ar_mem && !rd_full;
 
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_ar_map
-            assign M_IO_ARVALID[i] = S_ARVALID && is_ar_io && (ar_io_idx == i) && !rd_full;
+            assign IO_ARVALID[i] = M_ARVALID && is_ar_io && (ar_io_idx == i) && !rd_full;
         end
     endgenerate
 
@@ -116,17 +116,20 @@ module axi_router #(
             aw_ptr <= 0; w_ptr <= 0; b_ptr <= 0;
             ar_ptr <= 0; r_ptr <= 0;
         end else begin
-            if (S_AWVALID && S_AWREADY) begin
-                wr_target_ram[aw_ptr[1:0]] <= is_aw_m0 ? 4'd0 : {1'b1, aw_io_idx};
+            if (M_AWVALID && M_AWREADY) begin
+                wr_target_ram[aw_ptr[1:0]] <= is_aw_mem ? 4'd0 : {1'b1, aw_io_idx};
                 aw_ptr <= aw_ptr + 1'b1;
             end
-			if (S_WVALID && S_WREADY && S_WLAST) w_ptr <= w_ptr + 1'b1;
-            if (S_BVALID && S_BREADY)            b_ptr <= b_ptr + 1'b1;
-            if (S_ARVALID && S_ARREADY) begin
-                rd_target_ram[ar_ptr[1:0]] <= is_ar_m0 ? 4'd0 : {1'b1, ar_io_idx};
+            
+            if (M_WVALID && M_WREADY && M_WLAST) w_ptr <= w_ptr + 1'b1;
+            
+            if (M_BVALID && M_BREADY)            b_ptr <= b_ptr + 1'b1;
+
+            if (M_ARVALID && M_ARREADY) begin
+                rd_target_ram[ar_ptr[1:0]] <= is_ar_mem ? 4'd0 : {1'b1, ar_io_idx};
                 ar_ptr <= ar_ptr + 1'b1;
             end
-            if (S_RVALID && S_RREADY && S_RLAST) r_ptr <= r_ptr + 1'b1;
+            if (M_RVALID && M_RREADY && M_RLAST) r_ptr <= r_ptr + 1'b1;
         end
     end
 
@@ -135,12 +138,12 @@ module axi_router #(
     wire w_is_mem       = (w_target == 4'd0);
     wire [2:0] w_io_idx = w_target[2:0];
     
-    assign S_WREADY  = w_empty ? 1'b0 : (w_is_mem ? M0_WREADY : M_IO_WREADY[w_io_idx]);
-    assign M0_WVALID = S_WVALID && !w_empty && w_is_mem;
+    assign M_WREADY  = w_empty ? 1'b0 : (w_is_mem ? MEM_WREADY : IO_WREADY[w_io_idx]);
+    assign MEM_WVALID = M_WVALID && !w_empty && w_is_mem;
     
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_w_map
-            assign M_IO_WVALID[i] = S_WVALID && !w_empty && !w_is_mem && (w_io_idx == i);
+            assign IO_WVALID[i] = M_WVALID && !w_empty && !w_is_mem && (w_io_idx == i);
         end
     endgenerate
 
@@ -148,14 +151,14 @@ module axi_router #(
     wire b_is_mem       = (b_target == 4'd0);
     wire [2:0] b_io_idx = b_target[2:0];
     
-    assign S_BVALID  = b_empty ? 1'b0 : (b_is_mem ? M0_BVALID : M_IO_BVALID[b_io_idx]);
-    assign S_BID     = b_is_mem ? M0_BID : M_IO_BID[b_io_idx*ID_WIDTH +: ID_WIDTH];
-    assign S_BRESP   = b_is_mem ? M0_BRESP : M_IO_BRESP[b_io_idx*2 +: 2];
-    assign M0_BREADY = S_BREADY && !b_empty && b_is_mem;
+    assign M_BVALID  = b_empty ? 1'b0 : (b_is_mem ? MEM_BVALID : IO_BVALID[b_io_idx]);
+    assign M_BID     = b_is_mem ? MEM_BID : IO_BID[b_io_idx*ID_WIDTH +: ID_WIDTH];
+    assign M_BRESP   = b_is_mem ? MEM_BRESP : IO_BRESP[b_io_idx*2 +: 2];
+    assign MEM_BREADY = M_BREADY && !b_empty && b_is_mem;
     
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_b_map
-            assign M_IO_BREADY[i] = S_BREADY && !b_empty && !b_is_mem && (b_io_idx == i);
+            assign IO_BREADY[i] = M_BREADY && !b_empty && !b_is_mem && (b_io_idx == i);
         end
     endgenerate
 
@@ -163,16 +166,16 @@ module axi_router #(
     wire r_is_mem       = (r_target == 4'd0);
     wire [2:0] r_io_idx = r_target[2:0];
 
-    assign S_RVALID  = r_empty ? 1'b0 : (r_is_mem ? M0_RVALID : M_IO_RVALID[r_io_idx]);
-    assign S_RID     = r_is_mem ? M0_RID   : M_IO_RID  [r_io_idx*ID_WIDTH +: ID_WIDTH];
-    assign S_RDATA   = r_is_mem ? M0_RDATA : M_IO_RDATA[r_io_idx*DATA_WIDTH +: DATA_WIDTH];
-    assign S_RRESP   = r_is_mem ? M0_RRESP : M_IO_RRESP[r_io_idx*2 +: 2];
-    assign S_RLAST   = r_is_mem ? M0_RLAST : M_IO_RLAST[r_io_idx];
-    assign M0_RREADY = S_RREADY && !r_empty && r_is_mem;
+    assign M_RVALID  = r_empty ? 1'b0 : (r_is_mem ? MEM_RVALID : IO_RVALID[r_io_idx]);
+    assign M_RID     = r_is_mem ? MEM_RID   : IO_RID  [r_io_idx*ID_WIDTH +: ID_WIDTH];
+    assign M_RDATA   = r_is_mem ? MEM_RDATA : IO_RDATA[r_io_idx*DATA_WIDTH +: DATA_WIDTH];
+    assign M_RRESP   = r_is_mem ? MEM_RRESP : IO_RRESP[r_io_idx*2 +: 2];
+    assign M_RLAST   = r_is_mem ? MEM_RLAST : IO_RLAST[r_io_idx];
+    assign MEM_RREADY = M_RREADY && !r_empty && r_is_mem;
     
     generate
         for (i = 0; i < 8; i = i + 1) begin : io_r_map
-            assign M_IO_RREADY[i] = S_RREADY && !r_empty && !r_is_mem && (r_io_idx == i);
+            assign IO_RREADY[i] = M_RREADY && !r_empty && !r_is_mem && (r_io_idx == i);
         end
     endgenerate
 
