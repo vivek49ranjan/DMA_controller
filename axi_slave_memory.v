@@ -8,13 +8,12 @@ module axi_slave_memory #(
 
     input  wire [ID_WIDTH-1:0]      AWID,
     input  wire [ADDR_WIDTH-1:0]    AWADDR,
-    input  wire [3:0]               AWLEN,
+    input  wire [7:0]               AWLEN,   
     input  wire [2:0]               AWSIZE,
     input  wire [1:0]               AWBURST,
     input  wire                     AWVALID,
     output wire                     AWREADY,
 
-    input  wire [ID_WIDTH-1:0]      WID,
     input  wire [DATA_WIDTH-1:0]    WDATA,
     input  wire [(DATA_WIDTH/8)-1:0]WSTRB,
     input  wire                     WLAST,
@@ -28,7 +27,7 @@ module axi_slave_memory #(
 
     input  wire [ID_WIDTH-1:0]      ARID,
     input  wire [ADDR_WIDTH-1:0]    ARADDR,
-    input  wire [3:0]               ARLEN,
+    input  wire [7:0]               ARLEN,   
     input  wire [2:0]               ARSIZE,
     input  wire [1:0]               ARBURST,
     input  wire                     ARVALID,
@@ -53,10 +52,9 @@ module axi_slave_memory #(
     input  wire                     MEMORY_RD_BUSY
 );
 
-   
     reg [ID_WIDTH-1:0]   ar_id_q    [0:3];
     reg [ADDR_WIDTH-1:0] ar_addr_q  [0:3];
-    reg [3:0]            ar_len_q   [0:3];
+    reg [7:0]            ar_len_q   [0:3]; 
     reg [2:0]            ar_size_q  [0:3];
     reg [1:0]            ar_burst_q [0:3]; 
     
@@ -92,10 +90,9 @@ module axi_slave_memory #(
         end
     end
 
-    reg [3:0] r_beat;
+    reg [7:0] r_beat; 
     reg [ADDR_WIDTH-1:0] r_current_addr;
 
-    wire [ADDR_WIDTH-1:0] r_align_mask = ~((32'd1 << ar_size_q[ar_head]) - 1);
     wire r_is_unsupported = (ar_burst_q[ar_head] != 2'b01); 
 
     always @(*) begin
@@ -111,16 +108,16 @@ module axi_slave_memory #(
 
     always @(posedge ACLK or negedge ARESETN) begin
         if (!ARESETN) begin
-            r_beat <= 4'd0;
+            r_beat <= 8'd0;
             r_current_addr <= {ADDR_WIDTH{1'b0}};
         end else begin
             if (RVALID && RREADY) begin
                 if (RLAST) begin
-                    r_beat <= 4'd0;
+                    r_beat <= 8'd0;
                 end else begin
                     r_beat <= r_beat + 1'b1;
                     if (r_beat == 0)
-                        r_current_addr <= (ar_addr_q[ar_head] & r_align_mask) + (1 << ar_size_q[ar_head]);
+                        r_current_addr <= ar_addr_q[ar_head] + (1 << ar_size_q[ar_head]);
                     else
                         r_current_addr <= r_current_addr + (1 << ar_size_q[ar_head]);
                 end
@@ -128,7 +125,6 @@ module axi_slave_memory #(
         end
     end
 
-  
     reg [ID_WIDTH-1:0]   aw_id_q    [0:3];
     reg [ADDR_WIDTH-1:0] aw_addr_q  [0:3];
     reg [2:0]            aw_size_q  [0:3];
@@ -167,10 +163,10 @@ module axi_slave_memory #(
     reg [ADDR_WIDTH-1:0] w_current_addr;
     reg w_first_beat;
 
-    wire [ADDR_WIDTH-1:0] w_align_mask = ~((32'd1 << aw_size_q[aw_head]) - 1);
     wire w_is_unsupported = (aw_burst_q[aw_head] != 2'b01); 
 
-    assign WREADY = (aw_count > 0) && !MEMORY_WR_BUSY && !BVALID && (WID == aw_id_q[aw_head]);
+    assign WREADY = (aw_count > 0) && !MEMORY_WR_BUSY && !BVALID;
+    
     always @(*) begin
         MEMORY_WR_EN = WVALID && WREADY && (WSTRB != 0) && !w_is_unsupported;
         MEMORY_WDATA = WDATA;
@@ -188,8 +184,11 @@ module axi_slave_memory #(
         end else begin
             if (WVALID && WREADY) begin
                 w_first_beat <= WLAST;
-                if (w_first_beat) w_current_addr <= (aw_addr_q[aw_head] & w_align_mask) + (1 << aw_size_q[aw_head]);
-                else w_current_addr <= w_current_addr + (1 << aw_size_q[aw_head]);
+                if (w_first_beat) 
+                    w_current_addr <= aw_addr_q[aw_head] + (1 << aw_size_q[aw_head]);
+                else 
+                    w_current_addr <= w_current_addr + (1 << aw_size_q[aw_head]);
+                
                 if (WLAST) begin
                     BVALID <= 1'b1;
                     BID    <= aw_id_q[aw_head];
@@ -201,5 +200,4 @@ module axi_slave_memory #(
             end
         end
     end
-
 endmodule
