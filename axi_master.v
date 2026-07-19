@@ -1,7 +1,7 @@
 module axi_master #(
-    parameter ADDR_WIDTH = 32,
-    parameter DATA_WIDTH = 32,
-    parameter ID_WIDTH   = 4,
+    parameter ADDR_WIDTH   = 32,
+    parameter DATA_WIDTH   = 32,
+    parameter ID_WIDTH     = 4,
     parameter Q_DEPTH_BITS = 2
 ) (
     input  wire                      ACLK,
@@ -13,7 +13,7 @@ module axi_master #(
     input  wire                      cmd_rnw,
     input  wire [Q_DEPTH_BITS:0]     cmd_id,
     input  wire                      cmd_valid,
-    
+	 
     output reg                       read_cmd_ready,
     output reg                       write_cmd_ready,
     output reg                       read_cmd_done,
@@ -64,9 +64,11 @@ module axi_master #(
     input  wire                      RVALID,
     output reg                       RREADY
 );
-
+    
     reg [2:0] outstanding_reads;
-    wire read_pipeline_full = (outstanding_reads == 3'd4);
+    wire      read_pipeline_full = (outstanding_reads == 3'd4);
+    wire      ar_fire            = ARVALID && ARREADY;
+    wire      r_last_fire        = RVALID && RREADY && RLAST;
 
     always @(*) begin
         read_cmd_ready = !read_pipeline_full && !ARVALID;
@@ -74,8 +76,13 @@ module axi_master #(
 
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
-            ARVALID <= 1'b0;
+            ARVALID           <= 1'b0;
             outstanding_reads <= 3'd0;
+            ARADDR            <= {ADDR_WIDTH{1'b0}};
+            ARLEN             <= 8'd0;
+            ARSIZE            <= 3'd0;
+            ARID              <= {ID_WIDTH{1'b0}};
+            ARBURST           <= 2'b01;
         end else begin
             if (cmd_valid && !cmd_rnw && read_cmd_ready) begin
                 ARVALID <= 1'b1;
@@ -84,73 +91,58 @@ module axi_master #(
                 ARSIZE  <= cmd_size;
                 ARID    <= cmd_id;
                 ARBURST <= 2'b01;
-            end else if (ARVALID && ARREADY) begin
+            end else if (ar_fire) begin
                 ARVALID <= 1'b0;
             end
 
-            if (ARVALID && ARREADY && !(RVALID && RREADY && RLAST))
-                outstanding_reads <= outstanding_reads + 1'b1;
-            else if (!(ARVALID && ARREADY) && (RVALID && RREADY && RLAST))
-                outstanding_reads <= outstanding_reads - 1'b1;
+            case ({ar_fire, r_last_fire})
+                2'b10: outstanding_reads <= outstanding_reads + 1'b1; 
+                2'b01: outstanding_reads <= outstanding_reads - 1'b1; 
+                default: ; 
+            endcase
         end
     end
-
     always @(*) begin
-        RREADY = rx_ready;
-        rx_valid = RVALID;
-        rx_data = RDATA;
-        
+        RREADY        = rx_ready;
+        rx_valid      = RVALID;
+        rx_data       = RDATA;
         read_cmd_done = 1'b0;
         read_done_id  = RID[Q_DEPTH_BITS:0]; 
 
-        if (RVALID && RREADY && RLAST) begin
+        if (r_last_fire) begin
             read_cmd_done = 1'b1;
         end
     end
-
     localparam MAX_W_OUT = 4; 
     
-    reg [2:0] outstanding_writes;
-    
-    reg [1:0] aw_head; 
-    reg [1:0] w_tail;  
-    reg [1:0] b_tail;  
-    
-    reg [7:0]            awlen_buffer  [0:MAX_W_OUT-1]; 
-    reg [ADDR_WIDTH-1:0] awaddr_buffer [0:MAX_W_OUT-1]; 
-    reg [2:0]            awsize_buffer [0:MAX_W_OUT-1]; 
-    reg [MAX_W_OUT-1:0]  add_valid; 
+    reg [2:0]                outstanding_writes;
+    reg [1:0]                aw_head, w_tail, b_tail;  
+    reg [7:0]                awlen_buffer  [0:MAX_W_OUT-1]; 
+    reg [ADDR_WIDTH-1:0]     awaddr_buffer [0:MAX_W_OUT-1]; 
+    reg [2:0]                awsize_buffer [0:MAX_W_OUT-1]; 
+    reg [MAX_W_OUT-1:0]      add_valid; 
 
-    reg [7:0] w_beat_cnt; 
-    
     wire write_pipeline_full = (outstanding_writes == 3'd4);
-    
-    wire [7:0]            current_awlen  = awlen_buffer[w_tail]; 
-    wire [ADDR_WIDTH-1:0] current_awaddr = awaddr_buffer[w_tail];
-    wire [2:0]            current_awsize = awsize_buffer[w_tail];
-    wire                  w_channel_active = add_valid[w_tail]; 
-
-    reg [ADDR_WIDTH-1:0] w_current_addr;
-    wire [ADDR_WIDTH-1:0] w_addr_eff = (w_beat_cnt == 0) ? current_awaddr : w_current_addr;
+    wire aw_fire             = AWVALID && AWREADY;
+    wire b_fire              = BVALID  && BREADY;
 
     always @(*) begin
         write_cmd_ready = !write_pipeline_full && !AWVALID;
     end
 
-    integer i;
     always @(posedge ACLK or negedge ARESETn) begin
         if (!ARESETn) begin
-            AWVALID <= 1'b0;
+            AWVALID            <= 1'b0;
             outstanding_writes <= 3'd0;
-            aw_head <= 2'd0;
-            w_tail <= 2'd0;
-            b_tail <= 2'd0;
-            w_beat_cnt <= 8'd0; 
-            w_current_addr <= {ADDR_WIDTH{1'b0}};
-            for (i=0; i<MAX_W_OUT; i=i+1) add_valid[i] <= 1'b0;
-            for (i=0; i<MAX_W_OUT; i=i+1) awlen_buffer[i] <= 8'd0;
-            for (i=0; i<MAX_W_OUT; i=i+1) awaddr_buffer[i] <= {ADDR_WIDTH{1'b0}};
-            for (i=0; i<MAX_W_OUT; i=i+1) awsize_buffer[i] <= 3'd0;
+            AWADDR             <= {ADDR_WIDTH{1'b0}};
+            AWLEN              <= 8'd0;
+            AWSIZE             <= 3'd0;
+            AWID               <= {ID_WIDTH{1'b0}};
+            AWBURST            <= 2'b01;
+            
+            aw_head            <= 2'd0;
+            b_tail             <= 2'd0; 
+            add_valid          <= {MAX_W_OUT{1'b0}}; 
         end else begin
             if (cmd_valid && cmd_rnw && write_cmd_ready) begin
                 AWVALID <= 1'b1;
@@ -159,45 +151,68 @@ module axi_master #(
                 AWSIZE  <= cmd_size;
                 AWID    <= cmd_id;
                 AWBURST <= 2'b01;
-            end else if (AWVALID && AWREADY) begin
+            end else if (aw_fire) begin
                 AWVALID <= 1'b0;
             end
-            
-            if (AWVALID && AWREADY) begin
-                awlen_buffer[aw_head]  <= AWLEN;
-                awaddr_buffer[aw_head] <= AWADDR;
-                awsize_buffer[aw_head] <= AWSIZE;
-                add_valid[aw_head]     <= 1'b1;
-                aw_head <= aw_head + 1'b1;
-            end
-                
-            if (AWVALID && AWREADY && !(BVALID && BREADY))
-                outstanding_writes <= outstanding_writes + 1'b1;
-            else if (!(AWVALID && AWREADY) && (BVALID && BREADY))
-                outstanding_writes <= outstanding_writes - 1'b1;
-                
-            if (WVALID && WREADY) begin
-                w_current_addr <= (w_addr_eff & ~((1 << current_awsize) - 1)) + (1 << current_awsize);
-
-                if (w_beat_cnt == current_awlen) begin
-                    w_beat_cnt <= 8'd0; 
-                    w_tail <= w_tail + 1'b1;
-                end else begin
-                    w_beat_cnt <= w_beat_cnt + 1'b1;
+            case ({aw_fire, b_fire})
+                2'b11: begin 
+                    awlen_buffer[aw_head]  <= AWLEN;
+                    awaddr_buffer[aw_head] <= AWADDR;
+                    awsize_buffer[aw_head] <= AWSIZE;
+                    aw_head                <= aw_head + 1'b1;
+                    add_valid[aw_head]     <= 1'b1;
+                    
+                    b_tail <= b_tail + 1'b1;
+                    if (aw_head != b_tail) begin
+                        add_valid[b_tail] <= 1'b0;
+                    end
                 end
-            end
-            
-            if (BVALID && BREADY) begin
-                add_valid[b_tail] <= 1'b0; 
-                b_tail <= b_tail + 1'b1;
-            end
+                
+                2'b10: begin 
+                    outstanding_writes     <= outstanding_writes + 1'b1;
+                    awlen_buffer[aw_head]  <= AWLEN;
+                    awaddr_buffer[aw_head] <= AWADDR;
+                    awsize_buffer[aw_head] <= AWSIZE;
+                    aw_head                <= aw_head + 1'b1;
+                    add_valid[aw_head]     <= 1'b1;
+                end
+                
+                2'b01: begin 
+                    outstanding_writes <= outstanding_writes - 1'b1;
+                    b_tail             <= b_tail + 1'b1;
+                    add_valid[b_tail]  <= 1'b0;
+                end
+                
+                default: ; 
+            endcase
         end
     end
-
-    integer lane;
-    reg [(DATA_WIDTH/8)-1:0] wstrb_comb;
     
-    always @(*) begin
+    wire [7:0]            current_awlen  = awlen_buffer[w_tail]; 
+    wire [ADDR_WIDTH-1:0] current_awaddr = awaddr_buffer[w_tail];
+    wire [2:0]            current_awsize = awsize_buffer[w_tail];
+    wire                  w_channel_active = add_valid[w_tail]; 
+
+    reg [7:0]                w_beat_cnt;
+    reg [ADDR_WIDTH-1:0]     w_current_addr;
+	 
+    reg                      wvalid_reg;
+    reg [DATA_WIDTH-1:0]     wdata_reg;
+    reg [(DATA_WIDTH/8)-1:0] wstrb_reg;
+    reg                      wlast_reg;
+
+    wire [ADDR_WIDTH-1:0] w_addr_eff = (w_beat_cnt == 0) ? current_awaddr : w_current_addr;
+    wire w_advance = (!wvalid_reg || (wvalid_reg && WREADY)) && w_channel_active;
+    
+    reg [(DATA_WIDTH/8)-1:0] wstrb_comb;
+    always @(*) begin : w_channel_comb
+        integer lane;
+        tx_ready = w_advance;
+        WVALID   = wvalid_reg;
+        WDATA    = wdata_reg;
+        WSTRB    = wstrb_reg;
+        WLAST    = wlast_reg;
+
         wstrb_comb = {(DATA_WIDTH/8){1'b0}};
         for (lane = 0; lane < (DATA_WIDTH/8); lane = lane + 1) begin
             if ((lane >= (w_addr_eff % (DATA_WIDTH/8))) && 
@@ -207,22 +222,49 @@ module axi_master #(
         end
     end
 
+    always @(posedge ACLK or negedge ARESETn) begin
+        if (!ARESETn) begin
+            wvalid_reg     <= 1'b0;
+            wdata_reg      <= {DATA_WIDTH{1'b0}};
+            wstrb_reg      <= {(DATA_WIDTH/8){1'b0}};
+            wlast_reg      <= 1'b0;
+            w_beat_cnt     <= 8'd0;
+            w_tail         <= 2'd0;
+            w_current_addr <= {ADDR_WIDTH{1'b0}};
+        end else begin
+            if (wvalid_reg && WREADY) begin
+                wvalid_reg <= 1'b0;
+            end
+
+            if (w_advance && tx_valid) begin
+                wvalid_reg <= 1'b1;
+                wdata_reg  <= tx_data;
+                wstrb_reg  <= wstrb_comb;
+					 
+                wlast_reg  <= (w_beat_cnt == current_awlen);
+
+                w_current_addr <= (w_addr_eff & ~((1 << current_awsize) - 1)) + (1 << current_awsize);
+
+                if (w_beat_cnt == current_awlen) begin
+                    w_beat_cnt <= 8'd0; 
+                    w_tail     <= w_tail + 1'b1;
+                end else begin
+                    w_beat_cnt <= w_beat_cnt + 1'b1;
+                end
+            end
+        end
+    end
+    
     always @(*) begin
-        WVALID = tx_valid && w_channel_active; 
-        tx_ready = WREADY && w_channel_active;
-        WDATA = tx_data;
-        WLAST = (w_beat_cnt == current_awlen);
-        WSTRB = wstrb_comb; 
-        BREADY = 1'b1; 
-          
-        cmd_error = 1'b0;
+        BREADY         = 1'b1; 
+        cmd_error      = 1'b0;
         write_cmd_done = 1'b0;
         write_done_id  = BID[Q_DEPTH_BITS:0];
         
-        if (BVALID && BREADY) begin
+        if (b_fire) begin
             write_cmd_done = 1'b1;
             if (BRESP != 2'b00) begin
-                cmd_error = 1'b1; 
+                cmd_error  = 1'b1; 
             end
         end
     end
