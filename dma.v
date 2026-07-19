@@ -3,52 +3,53 @@ module dmac_controller #(
     parameter DATA_WIDTH = 32,
     parameter Q_DEPTH_BITS = 2 
 )(
-    input  wire                   clk,
-    input  wire                   resetn,
+    input  wire                    clk,
+    input  wire                    resetn,
 
-    output reg  [ADDR_WIDTH-1:0]  cmd_addr,
-    output reg  [7:0]             cmd_len,       
-    output reg  [2:0]             cmd_size,
-    output reg                    cmd_rnw,
-    output reg  [Q_DEPTH_BITS:0]  cmd_id,       
-    output reg                    cmd_valid,
-    input  wire                   read_cmd_ready,
-    input  wire                   write_cmd_ready,
+    output reg  [ADDR_WIDTH-1:0]   cmd_addr,
+    output reg  [7:0]              cmd_len,       
+    output reg  [2:0]              cmd_size,
+    output reg                     cmd_rnw,
+    output reg  [Q_DEPTH_BITS:0]   cmd_id,        
+    output reg                     cmd_valid,
+    input  wire                    read_cmd_ready,
+    input  wire                    write_cmd_ready,
     
-    input  wire                   read_cmd_done,
-    input  wire [Q_DEPTH_BITS:0]  read_done_id, 
-    input  wire                   write_cmd_done,
-    input  wire [Q_DEPTH_BITS:0]  write_done_id,
-    input  wire                   cmd_error,
+    input  wire                    read_cmd_done,
+    input  wire [Q_DEPTH_BITS:0]   read_done_id,  
+    input  wire                    write_cmd_done,
+    input  wire [Q_DEPTH_BITS:0]   write_done_id,
+    input  wire                    cmd_error,
 
-    output reg  [DATA_WIDTH-1:0]  tx_data,
-    output reg                    tx_valid,
-    input  wire                   tx_ready,
+    output reg  [DATA_WIDTH-1:0]   tx_data,
+    output reg                     tx_valid,
+    input  wire                    tx_ready,
     
-    input  wire [DATA_WIDTH-1:0]  rx_data,
-    input  wire                   rx_valid,
-    output reg                    rx_ready,
+    input  wire [DATA_WIDTH-1:0]   rx_data,
+    input  wire                    rx_valid,
+    output reg                     rx_ready,
 
-    output reg                    cpu_intr,
+    output reg                     cpu_intr,
 
-    input  wire                   reg_wr_en,
-    input  wire [ADDR_WIDTH-1:0]  reg_wr_addr,
-    input  wire [DATA_WIDTH-1:0]  reg_wdata,
+    input  wire                    reg_wr_valid,
+    output wire                    reg_wr_ready,
+    input  wire [ADDR_WIDTH-1:0]   reg_wr_addr,
+    input  wire [DATA_WIDTH-1:0]   reg_wdata,
     
-    output reg                    fifo_wr_en,
-    output reg  [DATA_WIDTH-1:0]  fifo_wdata,
-    input  wire                   fifo_full,
+    output reg                     fifo_wr_en,
+    output reg  [DATA_WIDTH-1:0]   fifo_wdata,
+    input  wire                    fifo_full,
     
-    output reg                    fifo_rd_en,
-    input  wire [DATA_WIDTH-1:0]  fifo_rdata,
-    input  wire                   fifo_empty
+    output reg                     fifo_rd_en,
+    input  wire [DATA_WIDTH-1:0]   fifo_rdata,
+    input  wire                    fifo_empty
 );
 
     reg [31:0] desc_queue [0:3][0:5];
     reg [31:0] desc_addr_q [0:3]; 
-    reg [1:0]  alloc_ptr;   
-    reg [1:0]  disp_ptr;    
-    reg [1:0]  commit_ptr;  
+    reg [1:0]  alloc_ptr;    
+    reg [1:0]  disp_ptr;     
+    reg [1:0]  commit_ptr;   
 
     reg [3:0]  valid_slots; 
     reg [3:0]  read_issued;
@@ -59,8 +60,9 @@ module dmac_controller #(
     reg  fetch_desc_update;
     reg  [31:0] fetch_desc_next_ptr;
 
-    reg [31:0] reg_ctrl, reg_curr_desc_ptr, reg_irq_clear;      
+    reg [31:0] reg_ctrl, reg_curr_desc_ptr, reg_irq_clear;        
     reg global_error;
+    reg desc_err_pulse; 
     
     reg running;
     reg end_of_chain_fetched; 
@@ -69,22 +71,21 @@ module dmac_controller #(
     reg [1:0] u_state;
     reg [2:0] desc_count; 
 
-    wire is_batch_end  = (desc_count == 3'd7) || (desc_queue[commit_ptr][0] == 32'd0) || global_error;
+    wire is_batch_end  = (desc_count == 3'd7) || (desc_queue[commit_ptr][0] == 32'd0) || global_error || desc_err_pulse;
     wire status_retire = (u_state == U_WAIT) && write_cmd_done && (write_done_id == {1'b1, commit_ptr});
-
-    reg [3:0] intr_pending_count;
+    
+    assign reg_wr_ready = 1'b1;
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            reg_ctrl           <= 32'd0;
-            reg_curr_desc_ptr  <= 32'd0;
-            reg_irq_clear      <= 32'd0;
-            global_error       <= 1'b0;
-            cpu_intr           <= 1'b0;
-            running            <= 1'b0; 
-            intr_pending_count <= 4'd0;
+            reg_ctrl          <= 32'd0;
+            reg_curr_desc_ptr <= 32'd0;
+            reg_irq_clear     <= 32'd0;
+            global_error      <= 1'b0;
+            cpu_intr          <= 1'b0;
+            running           <= 1'b0; 
         end else begin
-            if (reg_wr_en) begin
+            if (reg_wr_valid) begin
                 case (reg_wr_addr[7:0])
                     8'h00: reg_ctrl          <= reg_wdata;
                     8'h14: reg_curr_desc_ptr <= reg_wdata;
@@ -98,29 +99,24 @@ module dmac_controller #(
             if (reg_ctrl[0]) begin
                 reg_ctrl[0] <= 1'b0; 
                 running     <= 1'b1; 
-            end
-            else if((end_of_chain_fetched && valid_slots == 4'd0 && u_state == U_IDLE) ||  global_error) begin
+            end else if (end_of_chain_fetched && valid_slots == 4'd0 && u_state == U_IDLE) begin
                 running <= 1'b0;
             end
 
-            if (cmd_error) 
+            if (cmd_error || desc_err_pulse) begin
                 global_error <= 1'b1;
+            end else if (reg_irq_clear[0]) begin
+                global_error <= 1'b0; 
+            end
+
+            if (cmd_error || desc_err_pulse || (status_retire && is_batch_end)) begin
+                cpu_intr <= 1'b1;
+            end else if (reg_irq_clear[0]) begin
+                cpu_intr <= 1'b0;
+            end
 
             if (reg_irq_clear[0]) begin
                 reg_irq_clear[0] <= 1'b0;
-                global_error     <= 1'b0; 
-                
-                if (!(status_retire && is_batch_end) && intr_pending_count > 0) begin
-                    intr_pending_count <= intr_pending_count - 1'b1;
-                    if (intr_pending_count == 4'd1) cpu_intr <= 1'b0;
-                end
-            end
-            
-            if (status_retire && is_batch_end) begin                
-                if (!reg_irq_clear[0]) begin
-                    intr_pending_count <= intr_pending_count + 1'b1;
-                    cpu_intr           <= 1'b1;
-                end
             end
         end
     end
@@ -170,10 +166,7 @@ module dmac_controller #(
                 end
             end
 
-            if (read_issued_now && !read_pkt_done)
-                rx_q_count <= rx_q_count + 1'b1;
-            else if (!read_issued_now && read_pkt_done)
-                rx_q_count <= rx_q_count - 1'b1;
+            rx_q_count <= rx_q_count + read_issued_now - read_pkt_done;
         end
     end
 
@@ -187,21 +180,23 @@ module dmac_controller #(
             fetch_desc_update    <= 1'b0;
             fetch_desc_next_ptr  <= 32'd0;
             end_of_chain_fetched <= 1'b0;
+            desc_err_pulse       <= 1'b0;
             for (i=0; i<4; i=i+1) desc_addr_q[i] <= 32'd0;
         end else begin
             fetch_desc_update <= 1'b0;
+            desc_err_pulse    <= 1'b0; 
             if (reg_ctrl[0]) end_of_chain_fetched <= 1'b0;
 
             case (f_state)
                 F_IDLE: begin
-                     if ((reg_ctrl[0] || running) && !end_of_chain_fetched && !queue_full && !global_error) begin
-                          f_state <= F_REQ;
-                     end
+                    if ((reg_ctrl[0] || running) && !end_of_chain_fetched && !queue_full && !global_error && !desc_err_pulse) begin
+                        f_state <= F_REQ;
+                    end
                 end
                 F_REQ: begin
                     if (grant_f && read_cmd_ready) begin
-                        f_state    <= F_WAIT;
-                        word_count <= 3'd0;
+                        f_state                <= F_WAIT;
+                        word_count             <= 3'd0;
                         desc_addr_q[alloc_ptr] <= reg_curr_desc_ptr;
                     end
                 end
@@ -211,15 +206,22 @@ module dmac_controller #(
                         word_count <= word_count + 1'b1;
                         
                         if (word_count == 3'd5) begin 
-                            valid_slots[alloc_ptr] <= 1'b1;
-                            fetch_desc_update      <= 1'b1;
-                            fetch_desc_next_ptr    <= desc_queue[alloc_ptr][0];
                             
-                            if (desc_queue[alloc_ptr][0] == 32'd0)
+                            fetch_desc_update   <= 1'b1;
+                            fetch_desc_next_ptr <= desc_queue[alloc_ptr][0];
+                            
+                            if (desc_queue[alloc_ptr][0] == 32'd0) begin
                                 end_of_chain_fetched <= 1'b1;
-                                
-                            alloc_ptr <= alloc_ptr + 1'b1;
-                            f_state   <= F_IDLE;
+                            end
+
+                            if (rx_data[0] == 1'b1) begin
+                                desc_err_pulse         <= 1'b1; 
+                                valid_slots[alloc_ptr] <= 1'b0; 
+                            end else begin
+                                valid_slots[alloc_ptr] <= 1'b1;
+                                alloc_ptr              <= alloc_ptr + 1'b1;
+                            end
+                            f_state <= F_IDLE;
                         end
                     end
                 end
@@ -354,6 +356,9 @@ module dmac_controller #(
     reg [2:0]  tx_q_count;
     reg [7:0]  tx_beat_cnt;   
 
+    wire tx_push = cmd_valid && cmd_rnw && write_cmd_ready;
+    wire tx_pop  = tx_valid && tx_ready && (tx_beat_cnt == tx_cmd_q[tx_q_head][7:0] - 1'b1);
+
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             tx_q_head   <= 2'd0;
@@ -361,7 +366,7 @@ module dmac_controller #(
             tx_q_count  <= 3'd0;
             tx_beat_cnt <= 8'd0;
         end else begin
-            if (cmd_valid && cmd_rnw && write_cmd_ready) begin
+            if (tx_push) begin
                 tx_cmd_q[tx_q_tail] <= {(u_state == U_REQ), cmd_len};
                 tx_q_tail           <= tx_q_tail + 1'b1;
             end
@@ -375,10 +380,7 @@ module dmac_controller #(
                 end
             end
 
-            if ((cmd_valid && cmd_rnw && write_cmd_ready) && !(tx_valid && tx_ready && (tx_beat_cnt == tx_cmd_q[tx_q_head][7:0] - 1'b1)))
-                tx_q_count <= tx_q_count + 1'b1;
-            else if (!(cmd_valid && cmd_rnw && write_cmd_ready) && (tx_valid && tx_ready && (tx_beat_cnt == tx_cmd_q[tx_q_head][7:0] - 1'b1)))
-                tx_q_count <= tx_q_count - 1'b1;
+            tx_q_count <= tx_q_count + tx_push - tx_pop;
         end
     end
 
@@ -387,7 +389,7 @@ module dmac_controller #(
 
     always @(*) begin
         rx_ready   = (rx_is_fetch) ? (f_state == F_WAIT) : !fifo_full;
-        fifo_wr_en = (rx_valid && !rx_is_fetch && !fifo_full);
+        fifo_wr_en = (rx_valid && rx_ready && !rx_is_fetch);
         fifo_wdata = rx_data;
         
         if (tx_active && tx_is_status) begin
