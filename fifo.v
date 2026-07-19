@@ -1,68 +1,53 @@
-module fifo #(parameter D_size=8, parameter A_size=5) (
-    input r_clk, w_clk,
-    input w_reset, r_reset,
-    input w_inc, r_inc,
-    input [D_size-1:0] write_data,
-    output [D_size-1:0] read_data,
-    output full,
-    output empty
+module sync_fifo #(
+    parameter D_WIDTH = 32,
+    parameter A_WIDTH = 4
+)(
+    input  wire               clk,
+    input  wire               resetn,
+    
+    input  wire               wr_en,
+    input  wire [D_WIDTH-1:0] wdata,
+    output wire               full,
+    
+    input  wire               rd_en,
+    output wire [D_WIDTH-1:0] rdata,
+    output wire               empty
 );
-
-    wire [A_size:0] wr_ptr_g, rd_ptr_g;   
-    wire [A_size:0] wr_ptr_bin, rd_ptr_bin;
+    localparam DEPTH = 1 << A_WIDTH;
     
-    reg [A_size:0] wr_ptr_sync, rd_ptr_sync;  
-    
-    reg [A_size:0] wr_ptr_sync_q1, rd_ptr_sync_q1; 
+    reg [D_WIDTH-1:0] mem [0:DEPTH-1];
+    reg [A_WIDTH:0]   count;
+    reg [A_WIDTH-1:0] wr_ptr;
+    reg [A_WIDTH-1:0] rd_ptr;
 
-    
-    fifo_mem #(D_size, (1<<A_size), A_size) memory_bank (
-        .wr_clk(w_clk),
-        .wr_ptr(wr_ptr_bin[A_size-1:0]), 
-        .rd_ptr(rd_ptr_bin[A_size-1:0]),
-        .write_data(write_data),
-        .read_data(read_data),
-        .w_inc(w_inc),
-        .full(full)
-    );
+    wire do_write = wr_en && !full;
+    wire do_read  = rd_en && !empty;
 
-    full_indi #(A_size) write_ctrl (
-        .w_clk(w_clk),
-        .w_reset(w_reset),
-        .w_inc(w_inc),
-        .rd_ptr_sync(rd_ptr_sync), 
-        .wr_ptr_g(wr_ptr_g),
-        .wr_ptr_bin(wr_ptr_bin),
-        .full(full)
-    );
+    assign full  = (count == DEPTH);
+    assign empty = (count == 0);
 
-    empty_indi #(A_size) read_ctrl (
-        .r_clk(r_clk),
-        .r_reset(r_reset),
-        .r_inc(r_inc),
-        .wr_ptr_sync(wr_ptr_sync), 
-        .rd_ptr_g(rd_ptr_g),
-        .rd_ptr_bin(rd_ptr_bin),
-        .empty(empty)
-    );
+    assign rdata = mem[rd_ptr];
 
-    always @(posedge w_clk or posedge w_reset) begin
-        if (w_reset) begin
-            rd_ptr_sync_q1 <= 0;
-            rd_ptr_sync    <= 0;
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin
+            count  <= 0;
+            wr_ptr <= 0;
+            rd_ptr <= 0;
         end else begin
-            rd_ptr_sync_q1 <= rd_ptr_g;
-            rd_ptr_sync    <= rd_ptr_sync_q1;
-        end
-    end
-
-    always @(posedge r_clk or posedge r_reset) begin
-        if (r_reset) begin
-            wr_ptr_sync_q1 <= 0;
-            wr_ptr_sync    <= 0;
-        end else begin
-            wr_ptr_sync_q1 <= wr_ptr_g;
-            wr_ptr_sync    <= wr_ptr_sync_q1;
+            if (do_write) begin
+                mem[wr_ptr] <= wdata;
+                wr_ptr      <= wr_ptr + 1'b1;
+            end
+            
+            if (do_read) begin
+                rd_ptr <= rd_ptr + 1'b1;
+            end
+            
+            case ({do_write, do_read})
+                2'b10: count <= count + 1'b1;
+                2'b01: count <= count - 1'b1;
+                default: count <= count;
+            endcase
         end
     end
 
