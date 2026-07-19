@@ -3,23 +3,23 @@ module dmac_top #(
     parameter DATA_WIDTH = 32,
     parameter ID_WIDTH   = 4
 )(
-    input  wire                     clk,
-    input  wire                     resetn,
+    input  wire                      clk,
+    input  wire                      resetn,
     
-    input  wire [ADDR_WIDTH-1:0]    s_axi_awaddr,
-    input  wire                     s_axi_awvalid,
-    output wire                     s_axi_awready,
-    input  wire [DATA_WIDTH-1:0]    s_axi_wdata,
+    input  wire [ADDR_WIDTH-1:0]     s_axi_awaddr,
+    input  wire                      s_axi_awvalid,
+    output wire                      s_axi_awready,
+    input  wire [DATA_WIDTH-1:0]     s_axi_wdata,
     input  wire [(DATA_WIDTH/8)-1:0] s_axi_wstrb,
-    input  wire                     s_axi_wvalid,
-    output wire                     s_axi_wready,
-    output wire [1:0]               s_axi_bresp,
-    output wire                     s_axi_bvalid,
-    input  wire                     s_axi_bready,
+    input  wire                      s_axi_wvalid,
+    output wire                      s_axi_wready,
+    output wire [1:0]                s_axi_bresp,
+    output wire                      s_axi_bvalid,
+    input  wire                      s_axi_bready,
     
-    output wire                     cpu_intr,
+    output wire                      cpu_intr,
 
-    output wire [7:0]               snoop_io_wvalid,
+    output wire [7:0]                snoop_io_wvalid,
     output wire [(8*DATA_WIDTH)-1:0] snoop_io_wdata
 );
 
@@ -50,7 +50,7 @@ module dmac_top #(
     assign snoop_io_wdata  = {8{m_wdata}};            
 
     wire [ADDR_WIDTH-1:0]     cmd_addr;
-    wire [15:0]               cmd_len;
+    wire [7:0]                cmd_len;    // Fixed: changed from 16 to 8 bits to match port sizes
     wire [2:0]                cmd_size;
     wire                      cmd_rnw, cmd_valid, cmd_error;
     wire                      read_cmd_ready, write_cmd_ready, read_cmd_done, write_cmd_done;
@@ -58,11 +58,11 @@ module dmac_top #(
     wire                      tx_valid, tx_ready, rx_valid, rx_ready;
     wire                      fifo_wr_en, fifo_rd_en, fifo_full, fifo_empty;
     wire [DATA_WIDTH-1:0]     fifo_wdata, fifo_rdata;
-    wire                      reg_wr_en;
+    
+    wire                      reg_wr_valid, reg_wr_ready;
     wire [ADDR_WIDTH-1:0]     reg_wr_addr;
     wire [DATA_WIDTH-1:0]     reg_wdata;
 
-    wire reset_high = ~resetn; 
     wire [2:0] m_cmd_id, m_read_done_id, m_write_done_id;
 
     dmac_controller #(
@@ -79,20 +79,25 @@ module dmac_top #(
         .cmd_error(cmd_error),
         .tx_data(tx_data),               .tx_valid(tx_valid),       .tx_ready(tx_ready),
         .rx_data(rx_data),               .rx_valid(rx_valid),       .rx_ready(rx_ready),
-        .cpu_intr(cpu_intr),             .reg_wr_en(reg_wr_en),    .reg_wr_addr(reg_wr_addr),
-        .reg_wdata(reg_wdata),           .fifo_wr_en(fifo_wr_en),  .fifo_wdata(fifo_wdata),
+        .cpu_intr(cpu_intr),             
+        .reg_wr_valid(reg_wr_valid),     .reg_wr_ready(reg_wr_ready),
+        .reg_wr_addr(reg_wr_addr),       .reg_wdata(reg_wdata), 
+        .fifo_wr_en(fifo_wr_en),         .fifo_wdata(fifo_wdata),
         .fifo_full(fifo_full),           .fifo_rd_en(fifo_rd_en),  .fifo_rdata(fifo_rdata),
         .fifo_empty(fifo_empty)
     );
 
-    fifo #(
-        .D_size(32), .A_size(4) 
+    sync_fifo #(
+        .D_WIDTH(DATA_WIDTH), .A_WIDTH(4) 
     ) internal_fifo (
-        .w_clk(clk),               .r_clk(clk),
-        .w_reset(reset_high),      .r_reset(reset_high),
-        .w_inc(fifo_wr_en),        .r_inc(fifo_rd_en),
-        .write_data(fifo_wdata),   .read_data(fifo_rdata),
-        .full(fifo_full),          .empty(fifo_empty)
+        .clk(clk),
+        .resetn(resetn),
+        .wr_en(fifo_wr_en),
+        .wdata(fifo_wdata),
+        .full(fifo_full),
+        .rd_en(fifo_rd_en),
+        .rdata(fifo_rdata),
+        .empty(fifo_empty)
     );
 
     axi_master #(
@@ -169,7 +174,7 @@ module dmac_top #(
     );
 
     ram #(
-        .DEPTH(8192), .DATA_WIDTH(DATA_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)
+        .DEPTH(1024), .DATA_WIDTH(DATA_WIDTH), .ADDR_WIDTH(ADDR_WIDTH)
     ) internal_sram_inst (
         .clk(clk),
         .wr_en(ram_wr_en), .wr_addr(ram_wr_ad), .wdata(ram_wdata), .wstrb(ram_wstrb),
@@ -178,7 +183,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_0.hex"), .BASE_ADDR(32'h4000_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_0.hex"), .BASE_ADDR(32'h4000_0000)
     ) io_slave_0 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -194,7 +199,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_1.hex"), .BASE_ADDR(32'h4010_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_1.hex"), .BASE_ADDR(32'h4010_0000)
     ) io_slave_1 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -210,7 +215,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_2.hex"), .BASE_ADDR(32'h4020_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_2.hex"), .BASE_ADDR(32'h4020_0000)
     ) io_slave_2 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -226,7 +231,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_3.hex"), .BASE_ADDR(32'h4030_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_3.hex"), .BASE_ADDR(32'h4030_0000)
     ) io_slave_3 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -242,7 +247,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_4.hex"), .BASE_ADDR(32'h4040_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_4.hex"), .BASE_ADDR(32'h4040_0000)
     ) io_slave_4 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -258,7 +263,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_5.hex"), .BASE_ADDR(32'h4050_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_5.hex"), .BASE_ADDR(32'h4050_0000)
     ) io_slave_5 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -274,7 +279,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_6.hex"), .BASE_ADDR(32'h4060_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_6.hex"), .BASE_ADDR(32'h4060_0000)
     ) io_slave_6 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -290,7 +295,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(8192), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_7.hex"), .BASE_ADDR(32'h4070_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_7.hex"), .BASE_ADDR(32'h4070_0000)
     ) io_slave_7 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -313,7 +318,8 @@ module dmac_top #(
         .S_AXI_WDATA(s_axi_wdata),     .S_AXI_WSTRB(s_axi_wstrb),
         .S_AXI_WVALID(s_axi_wvalid),   .S_AXI_WREADY(s_axi_wready),
         .S_AXI_BRESP(s_axi_bresp),     .S_AXI_BVALID(s_axi_bvalid),   .S_AXI_BREADY(s_axi_bready),
-        .reg_wr_en(reg_wr_en),         .reg_wr_addr(reg_wr_addr),     .reg_wdata(reg_wdata)
+        .reg_wr_valid(reg_wr_valid),   .reg_wr_ready(reg_wr_ready),   
+        .reg_wr_addr(reg_wr_addr),     .reg_wdata(reg_wdata)
     );
 
 endmodule
