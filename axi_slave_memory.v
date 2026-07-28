@@ -67,9 +67,9 @@ module axi_slave_memory #(
     reg r_is_unsupported;
     reg [ADDR_WIDTH-1:0] r_addr_eff;
 
-    // FIXED: Evaluated dependencies first to prevent delta cycle mismatches
     always @(*) begin
-        r_addr_eff       = (r_beat == 0) ? ar_addr_q[ar_head] : r_current_addr;
+        r_addr_eff       = (r_beat == 0) ? (ar_addr_q[ar_head] & ~((1 << ar_size_q[ar_head]) - 1)) : r_current_addr;
+        
         RLAST            = (r_beat == ar_len_q[ar_head]);
         r_is_unsupported = (ar_burst_q[ar_head] != 2'b01);
         
@@ -137,7 +137,8 @@ module axi_slave_memory #(
 
     always @(*) begin
         w_is_unsupported = (aw_burst_q[aw_head] != 2'b01);
-        w_addr_eff       = w_first_beat ? aw_addr_q[aw_head] : w_current_addr;
+        
+        w_addr_eff       = w_first_beat ? (aw_addr_q[aw_head] & ~((1 << aw_size_q[aw_head]) - 1)) : w_current_addr;
 
         AWREADY          = (aw_count < 3'd4);
         WREADY           = (aw_count > 0) && !MEMORY_WR_BUSY && !BVALID;
@@ -175,6 +176,7 @@ module axi_slave_memory #(
 
             if (WVALID && WREADY) begin
                 w_first_beat   <= WLAST;
+                
                 w_current_addr <= w_addr_eff + (1 << aw_size_q[aw_head]);
                 
                 if (WLAST) begin
@@ -189,3 +191,4 @@ module axi_slave_memory #(
     end
 
 endmodule
+
