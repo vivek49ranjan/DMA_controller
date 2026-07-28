@@ -13,7 +13,7 @@ module axi_master #(
     input  wire                      cmd_rnw,
     input  wire [Q_DEPTH_BITS:0]     cmd_id,
     input  wire                      cmd_valid,
-	 
+    
     output reg                       read_cmd_ready,
     output reg                       write_cmd_ready,
     output reg                       read_cmd_done,
@@ -21,6 +21,7 @@ module axi_master #(
     output reg                       write_cmd_done,
     output reg  [Q_DEPTH_BITS:0]     write_done_id,
     output reg                       cmd_error,
+    output reg  [1:0]                cmd_error_type,
 
     input  wire [DATA_WIDTH-1:0]     tx_data,
     input  wire                      tx_valid,
@@ -68,7 +69,8 @@ module axi_master #(
     reg [2:0] outstanding_reads;
     wire      read_pipeline_full = (outstanding_reads == 3'd4);
     wire      ar_fire            = ARVALID && ARREADY;
-    wire      r_last_fire        = RVALID && RREADY && RLAST;
+    wire      r_fire             = RVALID && RREADY;
+    wire      r_last_fire        = r_fire && RLAST;
 
     always @(*) begin
         read_cmd_ready = !read_pipeline_full && !ARVALID;
@@ -102,6 +104,25 @@ module axi_master #(
             endcase
         end
     end
+
+    reg latch_rresp_err;
+    reg [1:0] latch_rresp_type;
+
+    always @(posedge ACLK or negedge ARESETn) begin
+        if (!ARESETn) begin
+            latch_rresp_err  <= 1'b0;
+            latch_rresp_type <= 2'b00;
+        end else begin
+            if (r_fire && RRESP != 2'b00) begin
+                latch_rresp_err  <= 1'b1;
+                latch_rresp_type <= RRESP;
+            end
+            if (r_last_fire) begin
+                latch_rresp_err  <= 1'b0; 
+            end
+        end
+    end
+
     always @(*) begin
         RREADY        = rx_ready;
         rx_valid      = RVALID;
@@ -113,6 +134,7 @@ module axi_master #(
             read_cmd_done = 1'b1;
         end
     end
+
     localparam MAX_W_OUT = 4; 
     
     reg [2:0]                outstanding_writes;
@@ -154,6 +176,7 @@ module axi_master #(
             end else if (aw_fire) begin
                 AWVALID <= 1'b0;
             end
+
             case ({aw_fire, b_fire})
                 2'b11: begin 
                     awlen_buffer[aw_head]  <= AWLEN;
@@ -195,7 +218,7 @@ module axi_master #(
 
     reg [7:0]                w_beat_cnt;
     reg [ADDR_WIDTH-1:0]     w_current_addr;
-	 
+    
     reg                      wvalid_reg;
     reg [DATA_WIDTH-1:0]     wdata_reg;
     reg [(DATA_WIDTH/8)-1:0] wstrb_reg;
@@ -205,6 +228,7 @@ module axi_master #(
     wire w_advance = (!wvalid_reg || (wvalid_reg && WREADY)) && w_channel_active;
     
     reg [(DATA_WIDTH/8)-1:0] wstrb_comb;
+
     always @(*) begin : w_channel_comb
         integer lane;
         tx_ready = w_advance;
@@ -240,7 +264,7 @@ module axi_master #(
                 wvalid_reg <= 1'b1;
                 wdata_reg  <= tx_data;
                 wstrb_reg  <= wstrb_comb;
-					 
+                    
                 wlast_reg  <= (w_beat_cnt == current_awlen);
 
                 w_current_addr <= (w_addr_eff & ~((1 << current_awsize) - 1)) + (1 << current_awsize);
@@ -258,13 +282,22 @@ module axi_master #(
     always @(*) begin
         BREADY         = 1'b1; 
         cmd_error      = 1'b0;
+        cmd_error_type = 2'b00;
         write_cmd_done = 1'b0;
         write_done_id  = BID[Q_DEPTH_BITS:0];
         
         if (b_fire) begin
             write_cmd_done = 1'b1;
-            if (BRESP != 2'b00) begin
-                cmd_error  = 1'b1; 
+            if (BRESP != 2'b00) begin 
+                cmd_error      = 1'b1; 
+                cmd_error_type = BRESP;
+            end
+        end
+
+        if (r_last_fire) begin
+            if (RRESP != 2'b00 || latch_rresp_err) begin 
+                cmd_error      = 1'b1;
+                cmd_error_type = latch_rresp_err ? latch_rresp_type : RRESP;
             end
         end
     end
