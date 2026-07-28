@@ -67,11 +67,11 @@ module axi_router #(
     
     wire is_aw_mem = (M_AWADDR[31:28] == 4'h0);
     wire is_aw_io  = (M_AWADDR[31:28] == 4'h4);
-    wire [2:0] aw_io_idx = M_AWADDR[22:20];
+    wire [2:0] aw_io_idx = M_AWADDR[27:25]; 
 
     wire is_ar_mem = (M_ARADDR[31:28] == 4'h0);
     wire is_ar_io  = (M_ARADDR[31:28] == 4'h4);
-    wire [2:0] ar_io_idx = M_ARADDR[22:20];
+    wire [2:0] ar_io_idx = M_ARADDR[27:25]; 
 
     reg [3:0] wr_target_ram [0:3];
     reg [2:0] aw_ptr, w_ptr, b_ptr; 
@@ -153,7 +153,8 @@ module axi_router #(
     wire b_is_err_targ  = (b_target == 4'hF);
     wire [2:0] b_io_idx = b_target[2:0];
     
-    assign M_BVALID   = b_empty ? 1'b0 : (b_is_mem ? MEM_BVALID : b_is_err_targ ? 1'b1 : IO_BVALID[b_io_idx]);
+    wire err_bvalid   = (w_ptr != b_ptr);
+    assign M_BVALID   = b_empty ? 1'b0 : (b_is_mem ? MEM_BVALID : b_is_err_targ ? err_bvalid : IO_BVALID[b_io_idx]);
     assign M_BID      = b_is_err_targ ? {ID_WIDTH{1'b0}} : (b_is_mem ? MEM_BID : IO_BID[b_io_idx*ID_WIDTH +: ID_WIDTH]);
     assign M_BRESP    = b_is_err_targ ? 2'b11 : (b_is_mem ? MEM_BRESP : IO_BRESP[b_io_idx*2 +: 2]); 
     assign MEM_BREADY = M_BREADY && !b_empty && b_is_mem;
