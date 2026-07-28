@@ -80,15 +80,14 @@ module axi_io_slave #(
     reg                  aw_push, aw_pop;
     reg                  w_is_unsupported;
 
-    // FIXED: Organized evaluation order
     always @(*) begin
-        r_addr_eff       = (r_beat_count == 0) ? ar_addr_queue[ar_head] : r_current_addr;
+        r_addr_eff       = (r_beat_count == 0) ? (ar_addr_queue[ar_head] & ~((1 << ar_size_queue[ar_head]) - 1)) : r_current_addr;
+        
         RLAST            = (r_beat_count == ar_len_queue[ar_head]);
         r_is_unsupported = (ar_burst_queue[ar_head] != 2'b01) || (ar_size_queue[ar_head] > 3'd2);
         
         w_is_unsupported = (aw_burst_queue[aw_head] != 2'b01) || (aw_size_queue[aw_head] > 3'd2);
 
-        // Read channel assignments
         ARREADY          = (ar_count < 3'd4);
         RVALID           = (ar_count > 0); 
         RID              = ar_id_queue[ar_head];
@@ -98,7 +97,6 @@ module axi_io_slave #(
         ar_push          = ARVALID && ARREADY;
         ar_pop           = RVALID  && RREADY  && RLAST;
 
-        // Write channel assignments
         AWREADY          = (aw_count < 3'd4);
         WREADY           = (aw_count > 0) && !BVALID;
         aw_push          = AWVALID && AWREADY;
@@ -137,7 +135,7 @@ module axi_io_slave #(
         end
     end
 
-    wire [ADDR_WIDTH-1:0] w_addr_eff = (w_beat_count == 0) ? aw_addr_queue[aw_head] : w_current_addr;
+    wire [ADDR_WIDTH-1:0] w_addr_eff = (w_beat_count == 0) ? (aw_addr_queue[aw_head] & ~((1 << aw_size_queue[aw_head]) - 1)) : w_current_addr;
 
     integer lane;
 
@@ -195,3 +193,4 @@ module axi_io_slave #(
     end
 
 endmodule
+
