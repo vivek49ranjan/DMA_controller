@@ -50,9 +50,10 @@ module dmac_top #(
     assign snoop_io_wdata  = {8{m_wdata}};            
 
     wire [ADDR_WIDTH-1:0]     cmd_addr;
-    wire [7:0]                cmd_len;    // Fixed: changed from 16 to 8 bits to match port sizes
+    wire [7:0]                cmd_len;    
     wire [2:0]                cmd_size;
     wire                      cmd_rnw, cmd_valid, cmd_error;
+    wire [1:0]                cmd_error_type; 
     wire                      read_cmd_ready, write_cmd_ready, read_cmd_done, write_cmd_done;
     wire [DATA_WIDTH-1:0]     tx_data, rx_data;
     wire                      tx_valid, tx_ready, rx_valid, rx_ready;
@@ -77,6 +78,7 @@ module dmac_top #(
         .write_cmd_done(write_cmd_done), 
         .write_done_id(m_write_done_id),   
         .cmd_error(cmd_error),
+        .cmd_error_type(cmd_error_type),
         .tx_data(tx_data),               .tx_valid(tx_valid),       .tx_ready(tx_ready),
         .rx_data(rx_data),               .rx_valid(rx_valid),       .rx_ready(rx_ready),
         .cpu_intr(cpu_intr),             
@@ -110,6 +112,7 @@ module dmac_top #(
         .read_cmd_done(read_cmd_done),   .write_cmd_done(write_cmd_done),
         .read_done_id(m_read_done_id), .write_done_id(m_write_done_id), .cmd_id(m_cmd_id),
         .cmd_error(cmd_error),
+        .cmd_error_type(cmd_error_type),
         .tx_data(tx_data),         .tx_valid(tx_valid),       .tx_ready(tx_ready),
         .rx_data(rx_data),         .rx_valid(rx_valid),       .rx_ready(rx_ready),
         
@@ -199,7 +202,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_1.hex"), .BASE_ADDR(32'h4010_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_1.hex"), .BASE_ADDR(32'h4200_0000)
     ) io_slave_1 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -215,7 +218,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_2.hex"), .BASE_ADDR(32'h4020_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_2.hex"), .BASE_ADDR(32'h4400_0000)
     ) io_slave_2 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -231,7 +234,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_3.hex"), .BASE_ADDR(32'h4030_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_3.hex"), .BASE_ADDR(32'h4600_0000)
     ) io_slave_3 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -247,7 +250,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_4.hex"), .BASE_ADDR(32'h4040_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_4.hex"), .BASE_ADDR(32'h4800_0000)
     ) io_slave_4 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -263,7 +266,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_5.hex"), .BASE_ADDR(32'h4050_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_5.hex"), .BASE_ADDR(32'h4A00_0000)
     ) io_slave_5 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -279,7 +282,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_6.hex"), .BASE_ADDR(32'h4060_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_6.hex"), .BASE_ADDR(32'h4C00_0000)
     ) io_slave_6 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -295,7 +298,7 @@ module dmac_top #(
 
     axi_io_slave #(
         .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .ID_WIDTH(ID_WIDTH),
-        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_7.hex"), .BASE_ADDR(32'h4070_0000)
+        .ROM_DEPTH(1024), .INIT_FILE("/home/debian/Documents/project/dma_controller/tb/io_data_7.hex"), .BASE_ADDR(32'h4E00_0000)
     ) io_slave_7 (
         .ACLK(clk), .ARESETN(resetn),
         .AWID(m_awid), .AWADDR(m_awaddr), .AWLEN(m_awlen), .AWSIZE(m_awsize), .AWBURST(m_awburst),
@@ -323,3 +326,4 @@ module dmac_top #(
     );
 
 endmodule
+
