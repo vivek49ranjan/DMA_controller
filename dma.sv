@@ -1,84 +1,84 @@
+import dmac_pkg::*;
+
 module dmac_controller #(
     parameter ADDR_WIDTH = 32,
     parameter DATA_WIDTH = 32,
     parameter Q_DEPTH_BITS = 2 
 )(
-    input  wire                    clk,
-    input  wire                    resetn,
+    input  logic                  clk,
+    input  logic                  resetn,
 
-    output reg  [ADDR_WIDTH-1:0]   cmd_addr,
-    output reg  [7:0]              cmd_len,       
-    output reg  [2:0]              cmd_size,
-    output reg                     cmd_rnw,
-    output reg  [Q_DEPTH_BITS:0]   cmd_id,        
-    output reg                     cmd_valid,
-    input  wire                    read_cmd_ready,
-    input  wire                    write_cmd_ready,
+    output dma_cmd_t              cmd_out,
+    output logic                  cmd_valid,
+    input  logic                  read_cmd_ready,
+    input  logic                  write_cmd_ready,
     
-    input  wire                    read_cmd_done,
-    input  wire [Q_DEPTH_BITS:0]   read_done_id,  
-    input  wire                    write_cmd_done,
-    input  wire [Q_DEPTH_BITS:0]   write_done_id,
-    input  wire                    cmd_error,
-    input  wire [1:0]              cmd_error_type,
+    input  logic                  read_cmd_done,
+    input  logic [Q_DEPTH_BITS:0] read_done_id,  
+    input  logic                  write_cmd_done,
+    input  logic [Q_DEPTH_BITS:0] write_done_id,
+    input  logic                  cmd_error,
+    input  logic [1:0]            cmd_error_type,
 
-    output reg  [DATA_WIDTH-1:0]   tx_data,
-    output reg                     tx_valid,
-    input  wire                    tx_ready,
+    output logic [DATA_WIDTH-1:0] tx_data,
+    output logic                  tx_valid,
+    input  logic                  tx_ready,
     
-    input  wire [DATA_WIDTH-1:0]   rx_data,
-    input  wire                    rx_valid,
-    output reg                     rx_ready,
+    input  logic [DATA_WIDTH-1:0] rx_data,
+    input  logic                  rx_valid,
+    output logic                  rx_ready,
 
-    output reg                     cpu_intr,
+    output logic                  cpu_intr,
 
-    input  wire                    reg_wr_valid,
-    output wire                    reg_wr_ready,
-    input  wire [ADDR_WIDTH-1:0]   reg_wr_addr,
-    input  wire [DATA_WIDTH-1:0]   reg_wdata,
+    input  logic                  reg_wr_valid,
+    output logic                  reg_wr_ready,
+    input  logic [ADDR_WIDTH-1:0] reg_wr_addr,
+    input  logic [DATA_WIDTH-1:0] reg_wdata,
     
-    output reg                     fifo_wr_en,
-    output reg  [DATA_WIDTH-1:0]   fifo_wdata,
-    input  wire                    fifo_full,
+    output logic                  fifo_wr_en,
+    output logic [DATA_WIDTH-1:0] fifo_wdata,
+    input  logic                  fifo_full,
     
-    output reg                     fifo_rd_en,
-    input  wire [DATA_WIDTH-1:0]   fifo_rdata,
-    input  wire                    fifo_empty
+    output logic                  fifo_rd_en,
+    input  logic [DATA_WIDTH-1:0] fifo_rdata,
+    input  logic                  fifo_empty
 );
 
-    reg [31:0] desc_queue [0:3][0:5];
-    reg [31:0] desc_addr_q [0:3]; 
-    reg [1:0]  alloc_ptr, disp_ptr, commit_ptr;   
+    dma_desc_t desc_queue [0:3];
+    logic [31:0] desc_addr_q [0:3]; 
+    logic [1:0]  alloc_ptr, disp_ptr, commit_ptr;   
 
-    reg [3:0]  valid_slots; 
-    reg [3:0]  read_issued, read_completed, write_completed;
-    wire queue_full = valid_slots[alloc_ptr];
+    logic [3:0]  valid_slots; 
+    logic [3:0]  read_issued, read_completed, write_completed;
+    logic        queue_full;
+    assign queue_full = valid_slots[alloc_ptr];
     
-    reg  fetch_desc_update;
-    reg  [31:0] fetch_desc_next_ptr;
-    reg  [31:0] reg_ctrl, reg_curr_desc_ptr, reg_irq_clear;        
+    logic        fetch_desc_update;
+    logic [31:0] fetch_desc_next_ptr;
+    logic [31:0] reg_ctrl, reg_curr_desc_ptr, reg_irq_clear;        
     
-    reg  halt_pipeline;
-    reg  desc_err_pulse;
-    reg  [1:0] err_alloc_ptr;
-    reg  axi_fetch_err_pulse;
-    reg  [1:0] axi_fetch_err_ptr;
+    logic        halt_pipeline;
+    logic        desc_err_pulse;
+    logic [1:0]  err_alloc_ptr;
+    logic        axi_fetch_err_pulse;
+    logic [1:0]  axi_fetch_err_ptr;
 
-    reg  running, end_of_chain_fetched; 
+    logic        running, end_of_chain_fetched; 
 
-    reg [2:0] slot_err [0:3]; 
-    reg [3:0] slot_has_err;
+    logic [2:0]  slot_err [0:3]; 
+    logic [3:0]  slot_has_err;
 
-    localparam U_IDLE = 2'd0, U_REQ = 2'd1, U_WAIT = 2'd2;
-    reg [1:0] u_state;
-    reg [2:0] desc_count; 
+    u_state_e u_state;
+    logic [2:0]  desc_count; 
 
-    wire is_batch_end  = (desc_count == 3'd7) || (desc_queue[commit_ptr][0] == 32'd0);
-    wire status_retire = (u_state == U_WAIT) && write_cmd_done && (write_done_id == {1'b1, commit_ptr});
+    logic        is_batch_end;
+    logic        status_retire;
+    assign is_batch_end  = (desc_count == 3'd7) || (desc_queue[commit_ptr].next_desc_ptr == 32'd0);
+    assign status_retire = (u_state == U_WAIT) && write_cmd_done && (write_done_id == {1'b1, commit_ptr});
     
     assign reg_wr_ready = 1'b1;
 
-    always @(posedge clk or negedge resetn) begin
+    always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             reg_ctrl            <= 32'd0;
             reg_curr_desc_ptr   <= 32'd0;
@@ -156,34 +156,42 @@ module dmac_controller #(
         end
     end
 
-    localparam F_IDLE = 2'd0, F_REQ = 2'd1, F_WAIT = 2'd2;
-    reg [1:0] f_state;
-    reg [2:0] word_count;
+    f_state_e f_state;
+    logic [2:0] word_count;
     
-    localparam D_IDLE = 2'd0, D_ISSUE_RD = 2'd1, D_ISSUE_WR = 2'd2;
-    reg [1:0] d_state;
+    d_state_e d_state;
 
-    wire grant_u    = (u_state == U_REQ);
-    wire grant_f    = (f_state == F_REQ) && !grant_u && !halt_pipeline;
-    wire grant_d_rd = (d_state == D_ISSUE_RD) && !grant_u && !grant_f && !halt_pipeline;
-    wire grant_d_wr = (d_state == D_ISSUE_WR) && !grant_u && !grant_f && !halt_pipeline;
+    logic grant_u;
+    logic grant_f;
+    logic grant_d_rd;
+    logic grant_d_wr;
+    
+    assign grant_u    = (u_state == U_REQ);
+    assign grant_f    = (f_state == F_REQ) && !grant_u && !halt_pipeline;
+    assign grant_d_rd = (d_state == D_ISSUE_RD) && !grant_u && !grant_f && !halt_pipeline;
+    assign grant_d_wr = (d_state == D_ISSUE_WR) && !grant_u && !grant_f && !halt_pipeline;
 
-    reg [8:0] rx_cmd_q [0:3]; 
-    reg [1:0] rx_q_head, rx_q_tail;
-    reg [2:0] rx_q_count;
+    rx_cmd_info_t rx_cmd_q [0:3]; 
+    logic [1:0] rx_q_head, rx_q_tail;
+    logic [2:0] rx_q_count;
 
-    wire rx_active   = (rx_q_count > 0);
-    wire rx_is_fetch = rx_active && rx_cmd_q[rx_q_head][8];
-    wire read_issued_now = cmd_valid && !cmd_rnw && read_cmd_ready;
+    logic rx_active;
+    logic rx_is_fetch;
+    logic read_issued_now;
+    
+    assign rx_active       = (rx_q_count > 0);
+    assign rx_is_fetch     = rx_active && rx_cmd_q[rx_q_head].is_fetch;
+    assign read_issued_now = cmd_valid && !cmd_out.rnw && read_cmd_ready;
 
-    always @(posedge clk or negedge resetn) begin
+    always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             rx_q_head  <= 2'd0;
             rx_q_tail  <= 2'd0;
             rx_q_count <= 3'd0;
         end else begin
             if (read_issued_now) begin
-                rx_cmd_q[rx_q_tail] <= {(f_state == F_REQ), cmd_len};
+                rx_cmd_q[rx_q_tail].is_fetch <= (f_state == F_REQ);
+                rx_cmd_q[rx_q_tail].len      <= cmd_out.len;
                 rx_q_tail           <= rx_q_tail + 1'b1;
             end
             if (read_cmd_done) rx_q_head <= rx_q_head + 1'b1;
@@ -191,8 +199,7 @@ module dmac_controller #(
         end
     end
 
-    integer i;
-    always @(posedge clk or negedge resetn) begin
+    always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             f_state              <= F_IDLE;
             alloc_ptr            <= 2'd0;
@@ -202,7 +209,7 @@ module dmac_controller #(
             desc_err_pulse       <= 1'b0;
             err_alloc_ptr        <= 2'd0;
             fetch_desc_update    <= 1'b0;
-            for (i=0; i<4; i=i+1) desc_addr_q[i] <= 32'd0;
+            for (int i=0; i<4; i++) desc_addr_q[i] <= 32'd0;
         end else begin
             fetch_desc_update <= 1'b0;
             desc_err_pulse    <= 1'b0; 
@@ -223,14 +230,20 @@ module dmac_controller #(
                 end
                 F_WAIT: begin
                     if (rx_valid && rx_ready && rx_is_fetch) begin
-                        desc_queue[alloc_ptr][word_count] <= rx_data;
+                        case(word_count)
+                            3'd0: desc_queue[alloc_ptr].next_desc_ptr <= rx_data;
+                            3'd1: desc_queue[alloc_ptr].src_addr      <= rx_data;
+                            3'd2: desc_queue[alloc_ptr].dst_addr      <= rx_data;
+                            3'd3: desc_queue[alloc_ptr].ctrl_len      <= rx_data;
+                            3'd4: desc_queue[alloc_ptr].status        <= rx_data;
+                        endcase
                         word_count <= word_count + 1'b1;
                         
-                        if (word_count == 3'd5) begin 
+                        if (word_count == 3'd4) begin 
                             fetch_desc_update   <= 1'b1;
-                            fetch_desc_next_ptr <= desc_queue[alloc_ptr][0];
+                            fetch_desc_next_ptr <= desc_queue[alloc_ptr].next_desc_ptr;
                             
-                            if (desc_queue[alloc_ptr][0] == 32'd0) end_of_chain_fetched <= 1'b1;
+                            if (desc_queue[alloc_ptr].next_desc_ptr == 32'd0) end_of_chain_fetched <= 1'b1;
 
                             if (rx_data[0] == 1'b1) begin
                                 desc_err_pulse <= 1'b1; 
@@ -250,8 +263,7 @@ module dmac_controller #(
         end
     end
 
-   
-    always @(posedge clk or negedge resetn) begin
+    always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             d_state     <= D_IDLE;
             disp_ptr    <= 2'd0;
@@ -289,8 +301,7 @@ module dmac_controller #(
         end
     end
 
-  
-    always @(posedge clk or negedge resetn) begin
+    always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             u_state         <= U_IDLE;
             commit_ptr      <= 2'd0;
@@ -298,7 +309,6 @@ module dmac_controller #(
             write_completed <= 4'd0;
             desc_count      <= 3'd0;
         end else begin
-            
             if (read_cmd_done && read_done_id[Q_DEPTH_BITS] == 1'b0)  
                 read_completed[read_done_id[Q_DEPTH_BITS-1:0]] <= 1'b1;
                 
@@ -337,55 +347,53 @@ module dmac_controller #(
         end
     end
 
-    always @(*) begin
-        cmd_valid = 1'b0;
-        cmd_rnw   = 1'b0;
-        cmd_addr  = 32'd0;
-        cmd_len   = 8'd0;
-        cmd_size  = 3'b010; 
-        cmd_id    = {(Q_DEPTH_BITS+1){1'b0}};
+    always_comb begin
+        cmd_valid    = 1'b0;
+        cmd_out      = '0;
 
         if (grant_u) begin 
-            cmd_valid = 1'b1;
-            cmd_rnw   = 1'b1;
-            cmd_addr  = desc_addr_q[commit_ptr] + 8'd20; 
-            cmd_len   = 8'd1;
-            cmd_size  = 3'b010; 
-            cmd_id    = {1'b1, commit_ptr}; 
+            cmd_valid    = 1'b1;
+            cmd_out.rnw  = 1'b1;
+            cmd_out.addr = desc_addr_q[commit_ptr] + 8'd16; 
+            cmd_out.len  = 8'd1;
+            cmd_out.size = 3'b010; 
+            cmd_out.id   = {1'b1, commit_ptr}; 
         end else if (f_state == F_REQ) begin
-            cmd_valid = 1'b1;
-            cmd_rnw   = 1'b0;
-            cmd_addr  = reg_curr_desc_ptr;
-            cmd_len   = 8'd6; 
-            cmd_size  = 3'b010; 
-            cmd_id    = {1'b1, alloc_ptr};  
+            cmd_valid    = 1'b1;
+            cmd_out.rnw  = 1'b0;
+            cmd_out.addr = reg_curr_desc_ptr;
+            cmd_out.len  = 8'd5; 
+            cmd_out.size = 3'b010; 
+            cmd_out.id   = {1'b1, alloc_ptr};  
         end else if (d_state == D_ISSUE_RD) begin
-            cmd_valid = 1'b1;
-            cmd_rnw   = 1'b0;
-            cmd_addr  = desc_queue[disp_ptr][1];
-            cmd_len   = desc_queue[disp_ptr][3][7:0]; 
-            cmd_size  = desc_queue[disp_ptr][3][18:16]; 
-            cmd_id    = {1'b0, disp_ptr};   
+            cmd_valid    = 1'b1;
+            cmd_out.rnw  = 1'b0;
+            cmd_out.addr = desc_queue[disp_ptr].src_addr;
+            cmd_out.len  = desc_queue[disp_ptr].ctrl_len[7:0]; 
+            cmd_out.size = desc_queue[disp_ptr].ctrl_len[18:16]; 
+            cmd_out.id   = {1'b0, disp_ptr};   
         end else if (d_state == D_ISSUE_WR) begin
-            cmd_valid = 1'b1;
-            cmd_rnw   = 1'b1;
-            cmd_addr  = desc_queue[disp_ptr][2];
-            cmd_len   = desc_queue[disp_ptr][3][7:0]; 
-            cmd_size  = desc_queue[disp_ptr][3][18:16];
-            cmd_id    = {1'b0, disp_ptr};   
+            cmd_valid    = 1'b1;
+            cmd_out.rnw  = 1'b1;
+            cmd_out.addr = desc_queue[disp_ptr].dst_addr;
+            cmd_out.len  = desc_queue[disp_ptr].ctrl_len[7:0]; 
+            cmd_out.size = desc_queue[disp_ptr].ctrl_len[18:16];
+            cmd_out.id   = {1'b0, disp_ptr};   
         end
     end
 
-   
-    reg [10:0] tx_cmd_q [0:3]; 
-    reg [1:0]  tx_q_head, tx_q_tail;
-    reg [2:0]  tx_q_count;
-    reg [7:0]  tx_beat_cnt;   
+    tx_cmd_info_t tx_cmd_q [0:3]; 
+    logic [1:0]  tx_q_head, tx_q_tail;
+    logic [2:0]  tx_q_count;
+    logic [7:0]  tx_beat_cnt;   
 
-    wire tx_push = cmd_valid && cmd_rnw && write_cmd_ready;
-    wire tx_pop  = tx_valid && tx_ready && (tx_beat_cnt == tx_cmd_q[tx_q_head][7:0] - 1'b1);
+    logic tx_push;
+    logic tx_pop;
+    
+    assign tx_push = cmd_valid && cmd_out.rnw && write_cmd_ready;
+    assign tx_pop  = tx_valid && tx_ready && (tx_beat_cnt == tx_cmd_q[tx_q_head].len - 1'b1);
 
-    always @(posedge clk or negedge resetn) begin
+    always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             tx_q_head   <= 2'd0;
             tx_q_tail   <= 2'd0;
@@ -393,12 +401,14 @@ module dmac_controller #(
             tx_beat_cnt <= 8'd0;
         end else begin
             if (tx_push) begin
-                tx_cmd_q[tx_q_tail] <= {(u_state == U_REQ), cmd_id[1:0], cmd_len};
+                tx_cmd_q[tx_q_tail].is_status <= (u_state == U_REQ);
+                tx_cmd_q[tx_q_tail].stat_id   <= cmd_out.id[1:0];
+                tx_cmd_q[tx_q_tail].len       <= cmd_out.len;
                 tx_q_tail           <= tx_q_tail + 1'b1;
             end
 
             if (tx_valid && tx_ready) begin
-                if (tx_beat_cnt == tx_cmd_q[tx_q_head][7:0] - 1'b1) begin
+                if (tx_beat_cnt == tx_cmd_q[tx_q_head].len - 1'b1) begin
                     tx_beat_cnt <= 8'd0;
                     tx_q_head   <= tx_q_head + 1'b1;
                 end else begin
@@ -410,12 +420,15 @@ module dmac_controller #(
         end
     end
 
-    wire tx_active    = (tx_q_count > 0);
-    wire tx_is_status = tx_cmd_q[tx_q_head][10];
-    wire [1:0] tx_stat_id = tx_cmd_q[tx_q_head][9:8];
-
+    logic tx_active;
+    logic tx_is_status;
+    logic [1:0] tx_stat_id;
     
-    always @(*) begin
+    assign tx_active    = (tx_q_count > 0);
+    assign tx_is_status = tx_cmd_q[tx_q_head].is_status;
+    assign tx_stat_id   = tx_cmd_q[tx_q_head].stat_id;
+
+    always_comb begin
         rx_ready   = (rx_is_fetch) ? (f_state == F_WAIT) : !fifo_full;
         fifo_wr_en = (rx_valid && rx_ready && !rx_is_fetch);
         fifo_wdata = rx_data;
@@ -438,5 +451,4 @@ module dmac_controller #(
             fifo_rd_en = 1'b0; 
         end
     end
-
 endmodule
